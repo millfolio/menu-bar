@@ -152,10 +152,15 @@ final class Bootstrapper: ObservableObject {
             var env = ProcessInfo.processInfo.environment
             env["HF_HOME"] = hfHome.path
             p.environment = env
+            // terminationHandler is @Sendable and fires on an arbitrary thread.
+            // Unwrap to a strong local first, then hop to the main actor — so the
+            // concurrent Task captures an immutable `self`, not the closure's
+            // captured weak `var` (a hard error under strict concurrency).
             p.terminationHandler = { [weak self] _ in
+                guard let self else { return }
                 Task { @MainActor in
-                    self?.serverProcess = nil
-                    self?.serverRunning = false
+                    self.serverProcess = nil
+                    self.serverRunning = false
                 }
             }
             try p.run()
