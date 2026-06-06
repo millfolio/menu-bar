@@ -14,17 +14,17 @@ server is up and which model it's serving.
 
 ## Install
 
-**Download:** grab `Millrace.dmg` from the
-[latest release](https://github.com/millrace/app/releases/latest), open it,
-and drag **Millrace** to **Applications**. (First launch: right-click → **Open**,
-since the build isn't Apple-notarized — see [`installer/`](installer).)
+**Download:** grab `Millrace.pkg` from the
+[latest release](https://github.com/millrace/app/releases/latest) and open it.
+The installer puts **Millrace** in `/Applications` and quits any running copy
+first (so updates work), signed + notarized — see [`installer/`](installer).
 
 **From source** (needs macOS 14+ and a Swift toolchain):
 
 ```sh
 cd menu && swift run                                 # run in dev
 cd installer && ./install.sh                         # build + install to /Applications
-cd installer && ./make_dmg.sh Millrace.dmg           # build a .dmg
+cd installer && ./make_pkg.sh Millrace.pkg           # build the installer .pkg
 ```
 
 Point it at a running millrace server (`pixi run serve` in mojo-backend; defaults

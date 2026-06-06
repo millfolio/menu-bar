@@ -2,7 +2,7 @@
 #
 # Build the Millrace menu-bar app (release) and assemble it into a macOS .app
 # bundle inside the given output directory. Shared by install.sh (local install)
-# and make_dmg.sh (CI / release packaging).
+# and make_pkg.sh (CI / release packaging).
 #
 # Usage:   bundle.sh <output-dir>     # -> <output-dir>/Millrace.app
 # Prints the assembled .app path on stdout (progress goes to stderr).
