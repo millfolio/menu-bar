@@ -1,11 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// Millpond — a macOS menu-bar companion for the millrace local inference server.
+/// Millrace — a macOS menu-bar companion for the local millrace inference server.
 /// Lives in the menu bar (no Dock icon when bundled with LSUIElement); shows
 /// whether the server is up and which model it is serving.
 @main
-struct MillpondApp: App {
+struct MillraceApp: App {
     @StateObject private var client = MillraceClient()
 
     var body: some Scene {
@@ -40,7 +40,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Quit Millpond") { NSApplication.shared.terminate(nil) }
+        Button("Quit Millrace") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
 }

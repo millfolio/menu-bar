@@ -1,6 +1,6 @@
 # menu
 
-The Millpond macOS menu-bar app — a SwiftUI [`MenuBarExtra`](https://developer.apple.com/documentation/swiftui/menubarextra)
+The Millrace macOS menu-bar app — a SwiftUI [`MenuBarExtra`](https://developer.apple.com/documentation/swiftui/menubarextra)
 that watches a local [millrace](https://github.com/millrace/mojo-backend) server
 and shows whether it's up and which model it's serving.
 
@@ -16,8 +16,8 @@ as a proper menu-bar app bundle, use [`../installer`](../installer).
 
 ## Layout
 
-- `Sources/Millpond/MillpondApp.swift` — the `MenuBarExtra` scene + menu content.
-- `Sources/Millpond/MillraceClient.swift` — polls the server's `/v1/models`
+- `Sources/Millrace/MillraceApp.swift` — the `MenuBarExtra` scene + menu content.
+- `Sources/Millrace/MillraceClient.swift` — polls the server's `/v1/models`
   every 5 s for reachability + the served model id (default
   `http://127.0.0.1:8000`).
 

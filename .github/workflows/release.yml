@@ -28,13 +28,13 @@ jobs:
       - uses: actions/checkout@v4
 
       # Import the Developer ID Application cert into a throwaway keychain and
-      # expose its identity to bundle.sh via MILLPOND_SIGN_IDENTITY. Skipped when
+      # expose its identity to bundle.sh via MILLRACE_SIGN_IDENTITY. Skipped when
       # no cert secret is set (-> ad-hoc build).
       - name: Import signing certificate
         if: env.MACOS_CERT_P12 != ''
         run: |
           CERT="$RUNNER_TEMP/cert.p12"
-          KEYCHAIN="$RUNNER_TEMP/millpond.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/millrace.keychain-db"
           KPW="$(openssl rand -hex 16)"
           echo "$MACOS_CERT_P12" | base64 --decode > "$CERT"
           security create-keychain -p "$KPW" "$KEYCHAIN"
@@ -46,23 +46,23 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
           ID="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/{print $2; exit}')"
           if [ -z "$ID" ]; then echo "::error::no Developer ID Application identity in the cert"; exit 1; fi
-          echo "MILLPOND_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
-          echo "MILLPOND_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "MILLRACE_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+          echo "MILLRACE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "imported signing identity $ID"
 
-      - name: Build Millpond.dmg
+      - name: Build Millrace.dmg
         run: |
           chmod +x installer/*.sh
-          ./installer/make_dmg.sh "$GITHUB_WORKSPACE/Millpond.dmg"
+          ./installer/make_dmg.sh "$GITHUB_WORKSPACE/Millrace.dmg"
 
       # Sign the dmg, notarize it, and staple the ticket. Skipped when the Apple
       # ID secret is unset.
       - name: Notarize and staple
         if: env.APPLE_ID != ''
         run: |
-          DMG="$GITHUB_WORKSPACE/Millpond.dmg"
-          if [ -n "${MILLPOND_SIGN_IDENTITY:-}" ]; then
-            codesign --force --sign "$MILLPOND_SIGN_IDENTITY" --timestamp "$DMG"
+          DMG="$GITHUB_WORKSPACE/Millrace.dmg"
+          if [ -n "${MILLRACE_SIGN_IDENTITY:-}" ]; then
+            codesign --force --sign "$MILLRACE_SIGN_IDENTITY" --timestamp "$DMG"
           fi
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
@@ -72,13 +72,13 @@ jobs:
 
       - name: Clean up keychain
         if: always() && env.MACOS_CERT_P12 != ''
-        run: security delete-keychain "${MILLPOND_KEYCHAIN:-$RUNNER_TEMP/millpond.keychain-db}" || true
+        run: security delete-keychain "${MILLRACE_KEYCHAIN:-$RUNNER_TEMP/millrace.keychain-db}" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Millpond-dmg
-          path: Millpond.dmg
+          name: Millrace-dmg
+          path: Millrace.dmg
           if-no-files-found: error
 
       # On a version tag (e.g. v0.1.0), publish a Release with the .dmg attached.
@@ -86,14 +86,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: Millpond.dmg
+          files: Millrace.dmg
           body: |
-            Millpond menu-bar app for millrace.
+            The Millrace menu-bar app for the millrace inference server.
 
-            **Install:** download `Millpond.dmg`, open it, drag **Millpond** to
+            **Install:** download `Millrace.dmg`, open it, drag **Millrace** to
             **Applications**, then launch it.
 
             > Signed + notarized builds open with a normal first-launch prompt.
             > Unsigned builds (no signing secrets configured) are Gatekeeper-blocked:
             > right-click the app -> **Open** once, or run
-            > `xattr -dr com.apple.quarantine /Applications/Millpond.app`.
+            > `xattr -dr com.apple.quarantine /Applications/Millrace.app`.

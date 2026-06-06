@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# Build Millpond.app and package it into a drag-to-Applications .dmg. Runs
+# Build Millrace.app and package it into a drag-to-Applications .dmg. Runs
 # headless (used by CI), so no Finder/AppleScript window styling -- just the app
 # plus an /Applications alias to drag onto.
 #
-# Usage:   ./make_dmg.sh [output.dmg]     # default: Millpond.dmg in CWD
+# Usage:   ./make_dmg.sh [output.dmg]     # default: Millrace.dmg in CWD
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="Millpond"
+APP_NAME="Millrace"
 OUT_DMG="${1:-${APP_NAME}.dmg}"
 
 STAGE="$(mktemp -d)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the Millpond menu-bar app (../menu) and install it as a proper macOS
+# Build the Millrace menu-bar app (../menu) and install it as a proper macOS
 # .app bundle (LSUIElement agent: menu-bar only, no Dock icon).
 #
 # Usage:

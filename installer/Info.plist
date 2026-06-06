@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Millpond</string>
+    <string>Millrace</string>
     <key>CFBundleDisplayName</key>
-    <string>Millpond</string>
+    <string>Millrace</string>
     <key>CFBundleIdentifier</key>
-    <string>net.millrace.millpond</string>
+    <string>me.millrace.app</string>
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
-    <string>Millpond</string>
+    <string>Millrace</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

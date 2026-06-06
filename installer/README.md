@@ -5,42 +5,42 @@ into a downloadable `.dmg`.
 
 ## Download (recommended)
 
-Grab `Millpond.dmg` from the [latest release](https://github.com/millrace/millpond/releases/latest)
-(built by CI on every version tag), open it, drag **Millpond** onto
+Grab `Millrace.dmg` from the [latest release](https://github.com/millrace/app/releases/latest)
+(built by CI on every version tag), open it, drag **Millrace** onto
 **Applications**, and launch it.
 
 > **Gatekeeper:** these builds are *ad-hoc signed, not Apple-notarized* (that
 > needs a paid Developer ID). On first launch macOS will say it "cannot verify
 > the developer." Either **right-click the app → Open** once, or run
-> `xattr -dr com.apple.quarantine /Applications/Millpond.app`. After that it
+> `xattr -dr com.apple.quarantine /Applications/Millrace.app`. After that it
 > launches normally.
 
 ## Build locally
 
 ```sh
-./install.sh                 # build + install to /Applications/Millpond.app
+./install.sh                 # build + install to /Applications/Millrace.app
 ./install.sh ~/Applications  # custom location
-./make_dmg.sh Millpond.dmg   # build a drag-to-Applications .dmg
+./make_dmg.sh Millrace.dmg   # build a drag-to-Applications .dmg
 ```
 
 To run at login: System Settings > General > Login Items > **+** > pick
-`Millpond.app`. To uninstall: `rm -rf /Applications/Millpond.app`.
+`Millrace.app`. To uninstall: `rm -rf /Applications/Millrace.app`.
 
 ## Files
 
-- `bundle.sh` — `swift build -c release` + assemble `Millpond.app` (executable +
+- `bundle.sh` — `swift build -c release` + assemble `Millrace.app` (executable +
   [`Info.plist`](Info.plist), which sets `LSUIElement` for a Dock-less menu-bar
   agent) + ad-hoc codesign. Shared by the two scripts below.
 - `install.sh` — bundle, then install into `/Applications` (or a given dir).
 - `make_dmg.sh` — bundle into a staging folder with an `Applications` alias and
   `hdiutil create` a compressed `.dmg`. Headless (no Finder), so it's what CI runs.
 - `Info.plist` — the bundle's `Contents/Info.plist`. Drop an icon at
-  `Millpond.icns` here to ship one.
+  `Millrace.icns` here to ship one.
 
 ## CI
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs
-`make_dmg.sh` on a `macos-14` runner: it builds `Millpond.dmg` on every push
+`make_dmg.sh` on a `macos-14` runner: it builds `Millrace.dmg` on every push
 (uploaded as a workflow artifact) and, on a `v*` tag, publishes a GitHub Release
 with the `.dmg` attached. Cut a release with:
 
@@ -73,6 +73,6 @@ Xcode or developer.apple.com and it's in your login keychain):
 base64 -i DeveloperID.p12 | pbcopy
 ```
 
-`bundle.sh` reads `MILLPOND_SIGN_IDENTITY` (set by the workflow from the imported
+`bundle.sh` reads `MILLRACE_SIGN_IDENTITY` (set by the workflow from the imported
 cert) to sign with the hardened runtime + timestamp; the workflow then signs,
 `notarytool submit --wait`s, and `stapler staple`s the `.dmg`.

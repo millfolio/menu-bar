@@ -13,7 +13,7 @@ enum ServerStatus {
         }
     }
 
-    /// SF Symbol for the menu-bar icon (water / millpond theme).
+    /// SF Symbol for the menu-bar icon (water-drop theme).
     var symbol: String {
         switch self {
         case .unknown: return "drop"
