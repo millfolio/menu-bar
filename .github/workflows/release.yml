@@ -1,0 +1,45 @@
+name: build dmg
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to create/upload the Release on tags
+
+jobs:
+  dmg:
+    runs-on: macos-14 # Apple Silicon runner; ships a Swift toolchain
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Millpond.dmg
+        run: |
+          chmod +x installer/*.sh
+          ./installer/make_dmg.sh "$GITHUB_WORKSPACE/Millpond.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Millpond-dmg
+          path: Millpond.dmg
+          if-no-files-found: error
+
+      # On a version tag (e.g. v0.1.0), publish a Release with the .dmg attached.
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Millpond.dmg
+          body: |
+            Millpond menu-bar app for millrace.
+
+            **Install:** download `Millpond.dmg`, open it, drag **Millpond** to
+            **Applications**, then launch it.
+
+            > This build is ad-hoc signed, not Apple-notarized, so on first launch
+            > macOS Gatekeeper will warn. Right-click the app → **Open** (once), or
+            > run `xattr -dr com.apple.quarantine /Applications/Millpond.app`.

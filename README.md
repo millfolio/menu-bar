@@ -12,15 +12,20 @@ watching over the millrace.
 | [`menu/`](menu)           | the SwiftUI `MenuBarExtra` app (Swift Package)        |
 | [`installer/`](installer) | packages the app into a `.app` bundle and installs it |
 
-## Quick start
+## Install
+
+**Download:** grab `Millpond.dmg` from the
+[latest release](https://github.com/millrace/millpond/releases/latest), open it,
+and drag **Millpond** to **Applications**. (First launch: right-click → **Open**,
+since the build isn't Apple-notarized — see [`installer/`](installer).)
+
+**From source** (needs macOS 14+ and a Swift toolchain):
 
 ```sh
-# run the menu-bar app in dev
-cd menu && swift run
-
-# or build + install it as /Applications/Millpond.app
-cd installer && ./install.sh && open /Applications/Millpond.app
+cd menu && swift run                                 # run in dev
+cd installer && ./install.sh                         # build + install to /Applications
+cd installer && ./make_dmg.sh Millpond.dmg           # build a .dmg
 ```
 
-Requires macOS 14+ and a Swift toolchain. Point it at a running millrace server
-(`pixi run serve` in mojo-backend; defaults to `http://127.0.0.1:8000`).
+Point it at a running millrace server (`pixi run serve` in mojo-backend; defaults
+to `http://127.0.0.1:8000`).
