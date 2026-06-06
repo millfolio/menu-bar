@@ -1,18 +1,23 @@
 import Foundation
 
-/// One-click engine bootstrap: fetch the official Mojo compiler+runtime straight
-/// from Modular's conda channel (so the *user* accepts Modular's license — we
-/// never redistribute it), unpack our engine source zip (mojo-backend + minja2 +
-/// flare + a prebuilt libflare_tls.so), build it with `mojo build` using the
-/// system Python, and launch the server. The menu's MillraceClient then sees
-/// `/v1/version` come up.
+/// Drives the local engine lifecycle from the menu bar, as three explicit steps:
 ///
-/// Everything lives under ~/Library/Application Support/Millrace.
+///   1. **Download runner** — fetch the official Mojo compiler+runtime from
+///      Modular's conda channel (so the *user* accepts Modular's license — we
+///      never redistribute it), unpack our engine source zip (mojo-backend +
+///      minja2 + flare + a prebuilt libflare_tls.so), build the server with
+///      `mojo build`, then download the default model's weights with the engine's
+///      own native-Mojo downloader (no huggingface_hub).
+///   2. **Start runner** — launch the built server against the downloaded model.
+///   3. **Start opencode** — point opencode at the running server (new Terminal).
 ///
-/// NOTE: this is the "rattler-by-URL" approach — we don't link the rattler crate,
-/// we just GET the pinned `.conda` packages (a .conda is a zip of zstd tarballs)
-/// and extract them ourselves with the system `unzip`/`tar`. Keep `mojoVersion`
-/// in sync with mojo-backend's pixi.lock.
+/// Everything lives under ~/Library/Application Support/Millrace, including the
+/// model weights (HF_HOME=<support>/hf), so uninstall is a single directory.
+///
+/// NOTE: the Mojo fetch is "rattler-by-URL" — we don't link the rattler crate, we
+/// GET the pinned `.conda` packages (a .conda is a zip of zstd tarballs) and
+/// extract them with the system `unzip`/`tar`. Keep `mojoVersion` in sync with
+/// mojo-backend/pixi.lock.
 @MainActor
 final class Bootstrapper: ObservableObject {
     enum Phase: Equatable {
@@ -25,17 +30,26 @@ final class Bootstrapper: ObservableObject {
             switch self {
             case .idle, .done: return nil
             case .running(let m): return m
-            case .failed(let e): return "Install failed: \(e)"
+            case .failed(let e): return "Failed: \(e)"
             }
         }
     }
 
+    /// Progress of the long-running "Download runner" provisioning step.
     @Published var phase: Phase = .idle
+    /// True while the engine server we launched is running.
+    @Published var serverRunning = false
+
     var isBusy: Bool { if case .running = phase { return true }; return false }
 
     // ── pinned manifest (keep in sync with mojo-backend/pixi.lock) ─────────────
     static let mojoVersion = "1.0.0b2.dev2026053106"
     static let condaChannel = "https://conda.modular.com/max-nightly"
+    /// Default model served by the runner. The 3B is int4-friendly and the
+    /// quality target; its tokenizer.json is read directly by the engine.
+    static let model = "Qwen/Qwen2.5-3B-Instruct"
+    static let modelSlug = "Qwen--Qwen2.5-3B-Instruct"
+
     private var mojoCompilerURL: URL {
         URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.mojoVersion)-release.conda")!
     }
@@ -43,7 +57,7 @@ final class Bootstrapper: ObservableObject {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
     /// The engine ("runner") source bundle (mojo-backend + vendored minja2/flare +
-    /// prebuilt libflare_tls.so), published by mojo-backend CI. Layout assumed below.
+    /// prebuilt libflare_tls.so), published by mojo-backend CI.
     private let runnerZipURL =
         URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/runner.zip")!
 
@@ -55,27 +69,40 @@ final class Bootstrapper: ObservableObject {
     private var mojoPrefix: URL { support.appendingPathComponent("mojo", isDirectory: true) }
     private var engineRoot: URL { support.appendingPathComponent("engine", isDirectory: true) }
     private var cacheDir: URL { support.appendingPathComponent("cache", isDirectory: true) }
+    /// HF cache root for the model weights (HF_HOME). Self-contained under support/.
+    private var hfHome: URL { support.appendingPathComponent("hf", isDirectory: true) }
     /// mojo-backend checkout inside the unpacked engine zip.
     private var backendDir: URL { engineRoot.appendingPathComponent("mojo-backend", isDirectory: true) }
+    private var serverBin: URL { backendDir.appendingPathComponent("build/server") }
 
-    /// True if a built engine is already present (skip the build).
-    var isInstalled: Bool {
-        FileManager.default.isExecutableFile(atPath: backendDir.appendingPathComponent("build/server").path)
+    /// The built engine server binary is present.
+    var isRunnerInstalled: Bool {
+        FileManager.default.isExecutableFile(atPath: serverBin.path)
     }
+    /// The default model's weights have been fully downloaded (refs/main is the
+    /// downloader's last write, so its presence means the snapshot is complete).
+    var weightsPresent: Bool {
+        FileManager.default.fileExists(
+            atPath: hfHome.appendingPathComponent("hub/models--\(Self.modelSlug)/refs/main").path)
+    }
+    /// Ready to launch: engine built and weights downloaded.
+    var canStartRunner: Bool { isRunnerInstalled && weightsPresent && !serverRunning }
 
-    func installAndLaunch() {
+    private var serverProcess: Process?
+
+    // ── step 1: download runner (+ weights) ─────────────────────────────────────
+    func downloadRunner() {
         guard !isBusy else { return }
         phase = .running("Starting…")
         Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.run()
+            await self?.provision()
         }
     }
 
-    // ── pipeline ───────────────────────────────────────────────────────────────
-    private func run() async {
+    private func provision() async {
         do {
             let fm = FileManager.default
-            for d in [support, mojoPrefix, engineRoot, cacheDir] {
+            for d in [support, mojoPrefix, engineRoot, cacheDir, hfHome] {
                 try fm.createDirectory(at: d, withIntermediateDirectories: true)
             }
 
@@ -97,15 +124,118 @@ final class Bootstrapper: ObservableObject {
             let python = try findPython()
 
             await set("Building engine (first run, ~1 min)…")
-            try buildEngine(python: python)
+            try buildBinary(python: python, source: "src/server.mojo",
+                            args: ["-I", "../minja2/src", "-I", "../flare"], out: "build/server")
 
-            await set("Starting engine…")
-            try launchServer()
+            if !weightsPresent {
+                await set("Building downloader…")
+                try buildBinary(python: python, source: "src/download.mojo",
+                                args: ["-I", "../flare"], out: "build/download")
+                await set("Downloading model weights (\(Self.model), several GB)…")
+                try downloadWeights(python: python)
+            }
 
             await set(done: true)
         } catch {
             await MainActor.run { self.phase = .failed(humanError(error)) }
         }
+    }
+
+    // ── step 2: start / stop runner ─────────────────────────────────────────────
+    func startRunner() {
+        guard canStartRunner, serverProcess == nil else { return }
+        do {
+            let p = Process()
+            p.executableURL = serverBin
+            p.currentDirectoryURL = backendDir   // hardcoded relative data paths resolve here
+            p.arguments = [Self.model]           // resolved from the HF cache below
+            var env = ProcessInfo.processInfo.environment
+            env["HF_HOME"] = hfHome.path
+            p.environment = env
+            p.terminationHandler = { [weak self] _ in
+                Task { @MainActor in
+                    self?.serverProcess = nil
+                    self?.serverRunning = false
+                }
+            }
+            try p.run()
+            serverProcess = p
+            serverRunning = true
+        } catch {
+            phase = .failed("start runner: \(humanError(error))")
+        }
+    }
+
+    func stopRunner() {
+        serverProcess?.terminate()
+        serverProcess = nil
+        serverRunning = false
+    }
+
+    // ── step 3: start opencode ──────────────────────────────────────────────────
+    /// Generate an opencode config from the running server's /v1/models, then open
+    /// opencode in a new Terminal window pointed at it. opencode is an interactive
+    /// TUI, so it must run in a real terminal, not detached.
+    func startOpencode() {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.launchOpencode() }
+            catch { await MainActor.run { self.phase = .failed("opencode: \(humanError(error))") } }
+        }
+    }
+
+    private func launchOpencode() async throws {
+        let base = "http://127.0.0.1:8000/v1"
+        let opencode = try findOpencode()
+        let configPath = try await writeOpencodeConfig(baseURL: base)
+
+        // A small launcher script avoids AppleScript quoting pitfalls.
+        let script = support.appendingPathComponent("run-opencode.sh")
+        let body = """
+        #!/bin/bash
+        export OPENCODE_CONFIG="\(configPath)"
+        export OPENAI_BASE_URL="\(base)"
+        export OPENAI_API_KEY="millrace"
+        exec "\(opencode)"
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try run("/usr/bin/osascript",
+                ["-e", "tell application \"Terminal\" to activate",
+                 "-e", "tell application \"Terminal\" to do script \"\(script.path)\""])
+    }
+
+    /// Build the opencode provider config the way mojo-backend/opencode_config.py
+    /// does, but in-process (no Python): query /v1/models and declare each served id.
+    private func writeOpencodeConfig(baseURL: String) async throws -> String {
+        guard let url = URL(string: baseURL + "/models") else {
+            throw BootstrapError.step("opencode", "bad base URL")
+        }
+        var req = URLRequest(url: url); req.timeoutInterval = 3
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = json["data"] as? [[String: Any]] else {
+            throw BootstrapError.step("opencode", "server not reachable at \(baseURL)/models — start the runner first")
+        }
+        let ids = arr.compactMap { $0["id"] as? String }
+        guard let first = ids.first else { throw BootstrapError.step("opencode", "no models served") }
+        var models: [String: Any] = [:]
+        for id in ids { models[id] = ["name": id.components(separatedBy: "/").last ?? id] }
+        let config: [String: Any] = [
+            "$schema": "https://opencode.ai/config.json",
+            "model": "millrace/" + first,
+            "provider": ["millrace": [
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "millrace (local)",
+                "options": ["baseURL": baseURL, "apiKey": "millrace"],
+                "models": models,
+            ]],
+        ]
+        let out = cacheDir.appendingPathComponent("opencode.json")
+        let blob = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted])
+        try blob.write(to: out)
+        return out.path
     }
 
     // ── steps ────────────────────────────────────────────────────────────────
@@ -121,7 +251,6 @@ final class Bootstrapper: ObservableObject {
     }
 
     /// A `.conda` is a zip containing `pkg-*.tar.zst` (the files) + `info-*.tar.zst`.
-    /// Unzip it, then extract every `pkg-*.tar.zst` into the prefix.
     private func extractConda(_ conda: URL, into prefix: URL) throws {
         let scratch = cacheDir.appendingPathComponent("conda-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
@@ -156,27 +285,31 @@ final class Bootstrapper: ObservableObject {
         throw BootstrapError.step("python", "no Python >= 3.10 found on PATH (Mojo needs one; install one or add it to PATH)")
     }
 
-    private func buildEngine(python: URL) throws {
-        let mojo = mojoPrefix.appendingPathComponent("bin/mojo").path
-        var env = ProcessInfo.processInfo.environment
-        // Put the chosen python + the mojo bin first so the toolchain finds them.
-        let extraPath = "\(python.deletingLastPathComponent().path):\(mojoPrefix.appendingPathComponent("bin").path)"
-        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        // flare looks for libflare_tls.so at $CONDA_PREFIX/lib else build/libflare_tls.so
-        // relative to cwd — the zip ships it at mojo-backend/build/, so leave it.
-        try run(mojo,
-                ["build", "src/server.mojo", "-I", "../minja2/src", "-I", "../flare", "-o", "build/server"],
-                cwd: backendDir, env: env)
+    private func findOpencode() throws -> String {
+        let candidates = ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"]
+            + (ProcessInfo.processInfo.environment["PATH"]?.split(separator: ":").map { String($0) + "/opencode" } ?? [])
+        for path in candidates where FileManager.default.isExecutableFile(atPath: path) { return path }
+        throw BootstrapError.step("opencode", "opencode not found on PATH — install it (https://opencode.ai) first")
     }
 
-    private func launchServer() throws {
-        let p = Process()
-        p.executableURL = backendDir.appendingPathComponent("build/server")
-        p.currentDirectoryURL = backendDir // hardcoded relative data paths resolve from here
-        // NOTE: the server needs model weights (argv[1] or the meta.txt fixture).
-        // Weights download is a separate step — TODO. For now it launches with the
-        // bundled default; MillraceClient polls /v1/version to confirm readiness.
-        try p.run()
+    private func mojoEnv(python: URL) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extraPath = "\(python.deletingLastPathComponent().path):\(mojoPrefix.appendingPathComponent("bin").path)"
+        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        return env
+    }
+
+    private func buildBinary(python: URL, source: String, args: [String], out: String) throws {
+        let mojo = mojoPrefix.appendingPathComponent("bin/mojo").path
+        // flare's libflare_tls.so ships at mojo-backend/build/ relative to cwd.
+        try run(mojo, ["build", source] + args + ["-o", out], cwd: backendDir, env: mojoEnv(python: python))
+    }
+
+    private func downloadWeights(python: URL) throws {
+        let dl = backendDir.appendingPathComponent("build/download").path
+        var env = mojoEnv(python: python)
+        env["HF_HOME"] = hfHome.path
+        try run(dl, [Self.model], cwd: backendDir, env: env)
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

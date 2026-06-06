@@ -2,8 +2,9 @@ import SwiftUI
 import AppKit
 
 /// Millrace — a macOS menu-bar companion for the local millrace inference server.
-/// Lives in the menu bar (no Dock icon when bundled with LSUIElement); shows
-/// whether the server is up and which model it is serving.
+/// Lives in the menu bar (no Dock icon when bundled with LSUIElement); drives the
+/// engine lifecycle: download the runner (+ model weights), start/stop it, and
+/// open opencode against it.
 @main
 struct MillraceApp: App {
     @StateObject private var client = MillraceClient()
@@ -29,25 +30,20 @@ struct MenuContent: View {
         Text(client.status.title)
 
         if client.status == .online {
-            if let version = client.version {
-                Text("Engine v\(version)")
-            }
-            if let model = client.model {
-                Text("Model: \(model)")
-            }
-        } else if client.status == .offline {
-            engineBootstrapSection
+            if let version = client.version { Text("Engine v\(version)") }
+            if let model = client.model { Text("Model: \(model)") }
         }
 
         Divider()
 
-        Button("Refresh") { client.refresh() }
+        engineActions
 
+        Divider()
+
+        Button("Refresh") { client.refresh() }
         if client.status == .online {
             Button("Open server in browser") {
-                if let url = URL(string: client.baseURL) {
-                    NSWorkspace.shared.open(url)
-                }
+                if let url = URL(string: client.baseURL) { NSWorkspace.shared.open(url) }
             }
         }
 
@@ -57,22 +53,43 @@ struct MenuContent: View {
             .keyboardShortcut("q")
     }
 
-    /// Engine not answering on :8000 — drive the one-click download/build/launch
-    /// bootstrap, or show its progress / error.
+    /// The three lifecycle actions, gated on what's installed / running.
     @ViewBuilder
-    private var engineBootstrapSection: some View {
-        switch bootstrapper.phase {
-        case .running(let msg):
-            Text(msg)
-        case .failed:
-            Text(bootstrapper.phase.message ?? "Install failed")
-            Button("Retry install") { bootstrapper.installAndLaunch() }
-        case .idle, .done:
-            Text("No engine detected on :8000")
-            Button("Install & launch engine…") { bootstrapper.installAndLaunch() }
+    private var engineActions: some View {
+        // Provisioning progress / errors take over while the download runs.
+        if bootstrapper.isBusy {
+            Text(bootstrapper.phase.message ?? "Working…")
+        } else {
+            if case .failed = bootstrapper.phase {
+                Text(bootstrapper.phase.message ?? "Failed")
+            }
+
+            // 1. Download runner (+ weights). Hidden once both are present.
+            if !(bootstrapper.isRunnerInstalled && bootstrapper.weightsPresent) {
+                Button(downloadLabel) { bootstrapper.downloadRunner() }
+            }
+
+            // 2. Start / Stop runner.
+            if bootstrapper.serverRunning || client.status == .online {
+                Button("Stop runner") { bootstrapper.stopRunner() }
+                    .disabled(!bootstrapper.serverRunning)
+            } else {
+                Button("Start runner") { bootstrapper.startRunner() }
+                    .disabled(!bootstrapper.canStartRunner)
+            }
+
+            // 3. Start opencode (needs a running server).
+            Button("Start opencode…") { bootstrapper.startOpencode() }
+                .disabled(client.status != .online)
         }
+
         Button("View engine on GitHub") {
             if let url = URL(string: engineRepoURL) { NSWorkspace.shared.open(url) }
         }
+    }
+
+    private var downloadLabel: String {
+        if case .failed = bootstrapper.phase { return "Retry download runner…" }
+        return bootstrapper.isRunnerInstalled ? "Download model weights…" : "Download runner…"
     }
 }
