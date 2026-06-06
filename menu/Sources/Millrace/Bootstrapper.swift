@@ -42,10 +42,10 @@ final class Bootstrapper: ObservableObject {
     private var mojoPythonURL: URL {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
-    /// The engine source bundle (mojo-backend + vendored minja2/flare + prebuilt
-    /// libflare_tls.so), published by mojo-backend CI. Layout assumed below.
-    private let engineZipURL =
-        URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/millrace-engine.zip")!
+    /// The engine ("runner") source bundle (mojo-backend + vendored minja2/flare +
+    /// prebuilt libflare_tls.so), published by mojo-backend CI. Layout assumed below.
+    private let runnerZipURL =
+        URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/runner.zip")!
 
     // ── install locations ─────────────────────────────────────────────────────
     private var support: URL {
@@ -89,7 +89,7 @@ final class Bootstrapper: ObservableObject {
             }
 
             await set("Downloading engine source…")
-            let zip = try await download(engineZipURL, name: "millrace-engine.zip")
+            let zip = try await download(runnerZipURL, name: "runner.zip")
             await set("Unpacking engine…")
             try unpackZip(zip, into: engineRoot)
 
