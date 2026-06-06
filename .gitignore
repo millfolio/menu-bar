@@ -1,0 +1,18 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Build artifacts / bundles
+*.app
+*.dmg
+*.pkg
+installer/*.icns
+
+# Xcode (if a project is added later)
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
