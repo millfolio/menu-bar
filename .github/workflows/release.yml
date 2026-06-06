@@ -13,13 +13,66 @@ permissions:
 jobs:
   dmg:
     runs-on: macos-14 # Apple Silicon runner; ships a Swift toolchain
+    env:
+      # Code-signing / notarization secrets (optional). When unset, the build is
+      # ad-hoc signed and the signing/notarization steps below are skipped, so
+      # the workflow still produces a (Gatekeeper-warned) .dmg. Set all five to
+      # get a signed + notarized "just download and open" build. See
+      # installer/README.md for how to create these.
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
+
+      # Import the Developer ID Application cert into a throwaway keychain and
+      # expose its identity to bundle.sh via MILLPOND_SIGN_IDENTITY. Skipped when
+      # no cert secret is set (-> ad-hoc build).
+      - name: Import signing certificate
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          CERT="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/millpond.keychain-db"
+          KPW="$(openssl rand -hex 16)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KPW" "$KEYCHAIN"
+          security import "$CERT" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KPW" "$KEYCHAIN" >/dev/null
+          # add the keychain to the search list so codesign can find the identity
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          ID="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/{print $2; exit}')"
+          if [ -z "$ID" ]; then echo "::error::no Developer ID Application identity in the cert"; exit 1; fi
+          echo "MILLPOND_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+          echo "MILLPOND_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "imported signing identity $ID"
 
       - name: Build Millpond.dmg
         run: |
           chmod +x installer/*.sh
           ./installer/make_dmg.sh "$GITHUB_WORKSPACE/Millpond.dmg"
+
+      # Sign the dmg, notarize it, and staple the ticket. Skipped when the Apple
+      # ID secret is unset.
+      - name: Notarize and staple
+        if: env.APPLE_ID != ''
+        run: |
+          DMG="$GITHUB_WORKSPACE/Millpond.dmg"
+          if [ -n "${MILLPOND_SIGN_IDENTITY:-}" ]; then
+            codesign --force --sign "$MILLPOND_SIGN_IDENTITY" --timestamp "$DMG"
+          fi
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Clean up keychain
+        if: always() && env.MACOS_CERT_P12 != ''
+        run: security delete-keychain "${MILLPOND_KEYCHAIN:-$RUNNER_TEMP/millpond.keychain-db}" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -40,6 +93,7 @@ jobs:
             **Install:** download `Millpond.dmg`, open it, drag **Millpond** to
             **Applications**, then launch it.
 
-            > This build is ad-hoc signed, not Apple-notarized, so on first launch
-            > macOS Gatekeeper will warn. Right-click the app → **Open** (once), or
-            > run `xattr -dr com.apple.quarantine /Applications/Millpond.app`.
+            > Signed + notarized builds open with a normal first-launch prompt.
+            > Unsigned builds (no signing secrets configured) are Gatekeeper-blocked:
+            > right-click the app -> **Open** once, or run
+            > `xattr -dr com.apple.quarantine /Applications/Millpond.app`.

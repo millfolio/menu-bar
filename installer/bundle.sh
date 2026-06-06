@@ -7,6 +7,11 @@
 # Usage:   bundle.sh <output-dir>     # -> <output-dir>/Millpond.app
 # Prints the assembled .app path on stdout (progress goes to stderr).
 #
+# Signing: if MILLPOND_SIGN_IDENTITY is set (a Developer ID Application identity
+# or its SHA-1 hash) the app is signed with the hardened runtime + a secure
+# timestamp (required for notarization). Otherwise it is ad-hoc signed -- fine
+# locally, but a downloaded copy is Gatekeeper-blocked until notarized.
+#
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -29,9 +34,13 @@ cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
 # Ship an icon by dropping installer/Millpond.icns:
 [[ -f "$HERE/${APP_NAME}.icns" ]] && cp "$HERE/${APP_NAME}.icns" "$APP/Contents/Resources/${APP_NAME}.icns"
 
-# Ad-hoc signature so it runs locally. NOTE: this is NOT Developer ID + notarized,
-# so a copy downloaded from the internet is quarantined and Gatekeeper will block
-# it until the user removes the quarantine / right-click -> Open (see README).
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "    (codesign skipped)" >&2
+SIGN_ID="${MILLPOND_SIGN_IDENTITY:--}"
+if [[ "$SIGN_ID" == "-" ]]; then
+    echo "==> Ad-hoc signing (set MILLPOND_SIGN_IDENTITY for a notarizable build)" >&2
+    codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "    (codesign skipped)" >&2
+else
+    echo "==> Signing with Developer ID: ${SIGN_ID}" >&2
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP" >&2
+fi
 
 echo "$APP"

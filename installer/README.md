@@ -48,14 +48,31 @@ with the `.dmg` attached. Cut a release with:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-## Making it "just works" (notarization)
+## Signing & notarization (make it "just open")
 
-To drop the Gatekeeper warning for downloaders, sign with a **Developer ID
-Application** certificate and notarize. With the cert + an app-specific password
-in repo secrets, extend `make_dmg.sh` / the workflow to:
+The workflow signs with **Developer ID** + **notarizes** automatically *when these
+repo secrets are present* (Settings -> Secrets and variables -> Actions). With
+none set, it falls back to an ad-hoc build (the Gatekeeper note above). All five
+are required to enable it; needs a paid Apple Developer account:
+
+| secret                | what                                                                 |
+|-----------------------|----------------------------------------------------------------------|
+| `MACOS_CERT_P12`      | base64 of your **Developer ID Application** cert exported as `.p12`  |
+| `MACOS_CERT_PASSWORD` | the password you set when exporting the `.p12`                       |
+| `APPLE_ID`            | your Apple ID email                                                  |
+| `APPLE_APP_PASSWORD`  | an **app-specific password** (appleid.apple.com -> Sign-In & Security) |
+| `APPLE_TEAM_ID`       | your 10-character Team ID (Apple Developer -> Membership)            |
+
+Export the cert + base64 it (after creating a "Developer ID Application" cert in
+Xcode or developer.apple.com and it's in your login keychain):
 
 ```sh
-codesign --force --options runtime --sign "Developer ID Application: …" Millpond.app
-xcrun notarytool submit Millpond.dmg --apple-id … --team-id … --password … --wait
-xcrun stapler staple Millpond.dmg
+# Keychain Access -> My Certificates -> right-click the "Developer ID Application"
+# cert -> Export -> .p12 (set a password; that password is MACOS_CERT_PASSWORD).
+# Then base64-encode the .p12 and copy it — paste as the MACOS_CERT_P12 value:
+base64 -i DeveloperID.p12 | pbcopy
 ```
+
+`bundle.sh` reads `MILLPOND_SIGN_IDENTITY` (set by the workflow from the imported
+cert) to sign with the hardened runtime + timestamp; the workflow then signs,
+`notarytool submit --wait`s, and `stapler staple`s the `.dmg`.
