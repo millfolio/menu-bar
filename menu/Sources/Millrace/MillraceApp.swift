@@ -7,10 +7,11 @@ import AppKit
 @main
 struct MillraceApp: App {
     @StateObject private var client = MillraceClient()
+    @StateObject private var bootstrapper = Bootstrapper()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(client: client)
+            MenuContent(client: client, bootstrapper: bootstrapper)
         } label: {
             Image(systemName: client.status.symbol)
         }
@@ -20,9 +21,9 @@ struct MillraceApp: App {
 
 struct MenuContent: View {
     @ObservedObject var client: MillraceClient
+    @ObservedObject var bootstrapper: Bootstrapper
 
-    /// Where the packaged inference engine is published.
-    private let engineReleasesURL = "https://github.com/millrace/mojo-backend/releases/latest"
+    private let engineRepoURL = "https://github.com/millrace/mojo-backend"
 
     var body: some View {
         Text(client.status.title)
@@ -35,14 +36,7 @@ struct MenuContent: View {
                 Text("Model: \(model)")
             }
         } else if client.status == .offline {
-            // Bootstrap affordance: no engine answering on :8000. Offer to get it.
-            // (Auto download + launch comes once the engine ships a bundled artifact.)
-            Text("No engine detected on :8000")
-            Button("Get the inference engine…") {
-                if let url = URL(string: engineReleasesURL) {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+            engineBootstrapSection
         }
 
         Divider()
@@ -61,5 +55,24 @@ struct MenuContent: View {
 
         Button("Quit Millrace") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// Engine not answering on :8000 — drive the one-click download/build/launch
+    /// bootstrap, or show its progress / error.
+    @ViewBuilder
+    private var engineBootstrapSection: some View {
+        switch bootstrapper.phase {
+        case .running(let msg):
+            Text(msg)
+        case .failed:
+            Text(bootstrapper.phase.message ?? "Install failed")
+            Button("Retry install") { bootstrapper.installAndLaunch() }
+        case .idle, .done:
+            Text("No engine detected on :8000")
+            Button("Install & launch engine…") { bootstrapper.installAndLaunch() }
+        }
+        Button("View engine on GitHub") {
+            if let url = URL(string: engineRepoURL) { NSWorkspace.shared.open(url) }
+        }
     }
 }
