@@ -256,6 +256,10 @@ final class Bootstrapper: ObservableObject {
     }
 
     /// A `.conda` is a zip containing `pkg-*.tar.zst` (the files) + `info-*.tar.zst`.
+    /// We unzip it (native), zstd-decompress each payload IN-PROCESS via the
+    /// vendored decoder, then untar the resulting plain `.tar`. The two-step
+    /// avoids `tar`'s zstd filter, which on macOS shells out to a `zstd` program
+    /// that isn't installed (libarchive here is built without built-in zstd).
     private func extractConda(_ conda: URL, into prefix: URL) throws {
         let scratch = cacheDir.appendingPathComponent("conda-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
@@ -265,8 +269,11 @@ final class Bootstrapper: ObservableObject {
         let pkgs = entries.filter { $0.hasPrefix("pkg-") && $0.hasSuffix(".tar.zst") }
         guard !pkgs.isEmpty else { throw BootstrapError.step("extract", "no pkg tar in \(conda.lastPathComponent)") }
         for pkg in pkgs {
-            // bsdtar (macOS 12+) auto-detects zstd; -C extracts into the prefix root.
-            try run("/usr/bin/tar", ["-xf", scratch.appendingPathComponent(pkg).path, "-C", prefix.path])
+            let zst = scratch.appendingPathComponent(pkg)
+            let tar = scratch.appendingPathComponent(String(pkg.dropLast(4)))   // strip ".zst"
+            try Zstd.decompressFile(zst, to: tar)
+            // Plain (uncompressed) tar — core libarchive, no optional filter.
+            try run("/usr/bin/tar", ["-xf", tar.path, "-C", prefix.path])
         }
     }
 
