@@ -31,7 +31,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/${APP_NAME}"
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
-# Ship an icon by dropping installer/Millrace.icns:
+# App icon (tracked; regenerate with `swift make_icon.swift`). Info.plist's
+# CFBundleIconFile points at it.
 [[ -f "$HERE/${APP_NAME}.icns" ]] && cp "$HERE/${APP_NAME}.icns" "$APP/Contents/Resources/${APP_NAME}.icns"
 
 SIGN_ID="${MILLRACE_SIGN_IDENTITY:--}"
