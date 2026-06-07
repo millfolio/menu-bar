@@ -14,7 +14,7 @@ struct MillraceApp: App {
         MenuBarExtra {
             MenuContent(client: client, bootstrapper: bootstrapper)
         } label: {
-            Image(systemName: client.status.symbol)
+            Image(nsImage: client.status == .online ? MenuBarIcon.active : MenuBarIcon.inactive)
         }
         .menuBarExtraStyle(.menu)
     }
