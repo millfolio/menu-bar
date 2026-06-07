@@ -174,7 +174,7 @@ final class Bootstrapper: ObservableObject {
                 try buildBinary(python: python, source: "src/download.mojo",
                                 args: ["-I", "../flare"], out: "build/download")
                 await set("Downloading model weights (\(Self.model), several GB)…")
-                try downloadWeights(python: python)
+                try downloadWeights()
             }
 
             await set(done: true)
@@ -191,7 +191,7 @@ final class Bootstrapper: ObservableObject {
             p.executableURL = serverBin
             p.currentDirectoryURL = backendDir   // hardcoded relative data paths resolve here
             p.arguments = [Self.model]           // resolved from the HF cache below
-            var env = ProcessInfo.processInfo.environment
+            var env = runtimeEnv()
             env["HF_HOME"] = hfHome.path
             p.environment = env
             // Stream the server's stdout/stderr into the shared log.
@@ -353,15 +353,29 @@ final class Bootstrapper: ObservableObject {
         throw BootstrapError.step("opencode", "opencode not found on PATH — install it (https://opencode.ai) first")
     }
 
+    /// Env for invoking `mojo build`. What conda's activation script exports — the
+    /// compiler reads $MODULAR_HOME/modular.cfg for its stdlib import path + libs.
     private func mojoEnv(python: URL) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         let extraPath = "\(python.deletingLastPathComponent().path):\(mojoPrefix.appendingPathComponent("bin").path)"
         env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        // What conda's activation script (etc/conda/activate.d) would export — the
-        // compiler reads $MODULAR_HOME/modular.cfg for its stdlib import path and
-        // runtime libs.
         env["CONDA_PREFIX"] = mojoPrefix.path
         env["MODULAR_HOME"] = mojoPrefix.appendingPathComponent("share/max").path
+        return env
+    }
+
+    /// Env for *running* the compiled Mojo binaries (download / server) — the
+    /// opposite of the build env: keep CONDA_PREFIX unset so flare loads
+    /// `build/libflare_tls.so` next to the binary (cwd) rather than
+    /// `$CONDA_PREFIX/lib`, and point OpenSSL at the system CA bundle (the bundled
+    /// libssl's compiled-in cert path is the CI prefix, which is absent here).
+    private func runtimeEnv() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env.removeValue(forKey: "CONDA_PREFIX")
+        env.removeValue(forKey: "MODULAR_HOME")
+        if FileManager.default.fileExists(atPath: "/etc/ssl/cert.pem") {
+            env["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
+        }
         return env
     }
 
@@ -392,9 +406,9 @@ final class Bootstrapper: ObservableObject {
         try run(mojo, ["build", source] + args + ["-o", out], cwd: backendDir, env: mojoEnv(python: python))
     }
 
-    private func downloadWeights(python: URL) throws {
+    private func downloadWeights() throws {
         let dl = backendDir.appendingPathComponent("build/download").path
-        var env = mojoEnv(python: python)
+        var env = runtimeEnv()
         env["HF_HOME"] = hfHome.path
         try run(dl, [Self.model], cwd: backendDir, env: env)
     }
