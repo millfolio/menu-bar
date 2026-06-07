@@ -155,6 +155,7 @@ final class Bootstrapper: ObservableObject {
                 let py = try await download(mojoPythonURL, name: "mojo-python.conda")
                 try extractConda(py, into: mojoPrefix)
             }
+            try relocateMojo()   // rewrite modular.cfg's baked placeholder prefix
 
             await set("Downloading engine source…")
             let zip = try await download(runnerZipURL, name: "runner.zip")
@@ -356,7 +357,33 @@ final class Bootstrapper: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         let extraPath = "\(python.deletingLastPathComponent().path):\(mojoPrefix.appendingPathComponent("bin").path)"
         env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        // What conda's activation script (etc/conda/activate.d) would export — the
+        // compiler reads $MODULAR_HOME/modular.cfg for its stdlib import path and
+        // runtime libs.
+        env["CONDA_PREFIX"] = mojoPrefix.path
+        env["MODULAR_HOME"] = mojoPrefix.appendingPathComponent("share/max").path
         return env
+    }
+
+    /// conda packages bake a placeholder install path into `share/max/modular.cfg`
+    /// (the value of `package_root`), normally rewritten by conda's prefix-
+    /// replacement step — which we skip by extracting the `.conda` by hand. Rewrite
+    /// it to our real prefix so the compiler can locate the stdlib (`import_path`)
+    /// and link the runtime libs (rpath). Idempotent; safe to run every time.
+    private func relocateMojo() throws {
+        let cfg = mojoPrefix.appendingPathComponent("share/max/modular.cfg")
+        guard var text = try? String(contentsOf: cfg, encoding: .utf8) else {
+            throw BootstrapError.step("relocate", "modular.cfg missing after extract")
+        }
+        guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix("package_root") }),
+              let eq = line.firstIndex(of: "=") else {
+            throw BootstrapError.step("relocate", "no package_root in modular.cfg")
+        }
+        let placeholder = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+        guard !placeholder.isEmpty, placeholder != mojoPrefix.path else { return }  // already done
+        text = text.replacingOccurrences(of: placeholder, with: mojoPrefix.path)
+        try text.write(to: cfg, atomically: true, encoding: .utf8)
+        appendLog("relocated mojo prefix: \(placeholder) -> \(mojoPrefix.path)\n")
     }
 
     private func buildBinary(python: URL, source: String, args: [String], out: String) throws {
