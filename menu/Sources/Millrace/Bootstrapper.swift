@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// Drives the local engine lifecycle from the menu bar, as three explicit steps:
 ///
@@ -74,6 +75,10 @@ final class Bootstrapper: ObservableObject {
     /// mojo-backend checkout inside the unpacked engine zip.
     private var backendDir: URL { engineRoot.appendingPathComponent("mojo-backend", isDirectory: true) }
     private var serverBin: URL { backendDir.appendingPathComponent("build/server") }
+    /// All subprocess output (mojo build, weights download, the running server)
+    /// is appended here so errors that flash by in the menu can be read in full.
+    var logFileURL: URL { support.appendingPathComponent("Millrace.log") }
+    var hasLog: Bool { FileManager.default.fileExists(atPath: logFileURL.path) }
 
     /// The built engine server binary is present.
     var isRunnerInstalled: Bool {
@@ -90,6 +95,41 @@ final class Bootstrapper: ObservableObject {
 
     private var serverProcess: Process?
 
+    // ── logging ──────────────────────────────────────────────────────────────
+    /// Ensure the log file (and its directory) exist; returns the path.
+    @discardableResult
+    private func ensureLog() -> URL {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+        if !fm.fileExists(atPath: logFileURL.path) {
+            fm.createFile(atPath: logFileURL.path, contents: nil)
+        }
+        return logFileURL
+    }
+
+    /// Append text to the log (best-effort; never throws).
+    private func appendLog(_ text: String) {
+        ensureLog()
+        guard let fh = try? FileHandle(forWritingTo: logFileURL) else { return }
+        defer { try? fh.close() }
+        fh.seekToEndOfFile()
+        if let d = text.data(using: .utf8) { fh.write(d) }
+    }
+
+    private func logHeader(_ what: String) {
+        appendLog("\n===== \(what) — \(Self.stamp()) =====\n")
+    }
+
+    private static func stamp() -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f.string(from: Date())
+    }
+
+    /// Open the log in the user's default viewer (Console/TextEdit).
+    func openLog() {
+        NSWorkspace.shared.open(ensureLog())
+    }
+
     // ── step 1: download runner (+ weights) ─────────────────────────────────────
     func downloadRunner() {
         guard !isBusy else { return }
@@ -105,6 +145,7 @@ final class Bootstrapper: ObservableObject {
             for d in [support, mojoPrefix, engineRoot, cacheDir, hfHome] {
                 try fm.createDirectory(at: d, withIntermediateDirectories: true)
             }
+            logHeader("Download runner")
 
             if !fm.fileExists(atPath: mojoPrefix.appendingPathComponent("bin/mojo").path) {
                 await set("Downloading Mojo compiler (~70 MB)…")
@@ -152,6 +193,13 @@ final class Bootstrapper: ObservableObject {
             var env = ProcessInfo.processInfo.environment
             env["HF_HOME"] = hfHome.path
             p.environment = env
+            // Stream the server's stdout/stderr into the shared log.
+            logHeader("Start runner: \(Self.model)")
+            if let h = try? FileHandle(forWritingTo: ensureLog()) {
+                h.seekToEndOfFile()
+                p.standardOutput = h
+                p.standardError = h
+            }
             // terminationHandler is @Sendable and fires on an arbitrary thread.
             // Unwrap to a strong local first, then hop to the main actor — so the
             // concurrent Task captures an immutable `self`, not the closure's
@@ -335,11 +383,14 @@ final class Bootstrapper: ObservableObject {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        appendLog("\n$ \(launch) \(args.joined(separator: " "))\n")
         try p.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         let out = String(data: data, encoding: .utf8) ?? ""
+        appendLog(out)
         if p.terminationStatus != 0 {
+            appendLog("\n[\(URL(fileURLWithPath: launch).lastPathComponent) exited \(p.terminationStatus)]\n")
             throw BootstrapError.step(URL(fileURLWithPath: launch).lastPathComponent,
                                       "exit \(p.terminationStatus): " + out.suffix(500))
         }

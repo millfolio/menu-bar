@@ -46,6 +46,9 @@ struct MenuContent: View {
                 if let url = URL(string: client.baseURL) { NSWorkspace.shared.open(url) }
             }
         }
+        if bootstrapper.hasLog {
+            Button("Open Log") { bootstrapper.openLog() }
+        }
 
         Divider()
 
@@ -60,8 +63,10 @@ struct MenuContent: View {
         if bootstrapper.isBusy {
             Text(bootstrapper.phase.message ?? "Working…")
         } else {
-            if case .failed = bootstrapper.phase {
-                Text(bootstrapper.phase.message ?? "Failed")
+            if case .failed(let msg) = bootstrapper.phase {
+                Text("Failed: \(msg.split(separator: "\n").first.map(String.init) ?? msg)")
+                    .lineLimit(1)
+                Button("Open Log") { bootstrapper.openLog() }
             }
 
             // 1. Download runner (+ weights). Hidden once both are present.
