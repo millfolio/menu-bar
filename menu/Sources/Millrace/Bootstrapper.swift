@@ -250,6 +250,9 @@ final class Bootstrapper: ObservableObject {
         export OPENCODE_CONFIG="\(configPath)"
         export OPENAI_BASE_URL="\(base)"
         export OPENAI_API_KEY="millrace"
+        # opencode's own dir + common bins on PATH (Terminal already sources the
+        # user's profile, but be explicit in case it shells out to helpers).
+        export PATH="\(URL(fileURLWithPath: opencode).deletingLastPathComponent().path):$PATH"
         exec "\(opencode)"
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
@@ -347,10 +350,17 @@ final class Bootstrapper: ObservableObject {
     }
 
     private func findOpencode() throws -> String {
-        let candidates = ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"]
-            + (ProcessInfo.processInfo.environment["PATH"]?.split(separator: ":").map { String($0) + "/opencode" } ?? [])
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // A GUI app's PATH is minimal and excludes per-user install dirs, so check
+        // the common ones explicitly (opencode installs to ~/.opencode/bin).
+        let candidates = [
+            "\(home)/.opencode/bin/opencode",
+            "\(home)/.local/bin/opencode",
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+        ] + (ProcessInfo.processInfo.environment["PATH"]?.split(separator: ":").map { String($0) + "/opencode" } ?? [])
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) { return path }
-        throw BootstrapError.step("opencode", "opencode not found on PATH — install it (https://opencode.ai) first")
+        throw BootstrapError.step("opencode", "opencode not found — install it (https://opencode.ai) or add it to PATH")
     }
 
     /// Env for invoking `mojo build`. What conda's activation script exports — the
