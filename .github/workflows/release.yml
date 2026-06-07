@@ -36,8 +36,12 @@ jobs:
       # their identities to bundle.sh / make_pkg.sh. The Installer cert is required.
       - name: Import signing certificates
         run: |
+          if [ -z "$MACOS_CERT_P12" ]; then
+            echo "::error::MACOS_CERT_P12 is required (Developer ID *Application* cert). The .app inside the .pkg must be Developer-ID signed with the hardened runtime, or Apple notarization returns Invalid. Add it (and MACOS_CERT_PASSWORD)."
+            exit 1
+          fi
           if [ -z "$MACOS_INSTALLER_CERT_P12" ]; then
-            echo "::error::MACOS_INSTALLER_CERT_P12 is required to sign the .pkg (Developer ID Installer cert). Add it (and MACOS_INSTALLER_CERT_PASSWORD) to repo secrets."
+            echo "::error::MACOS_INSTALLER_CERT_P12 is required to sign the .pkg (Developer ID *Installer* cert). Add it (and MACOS_INSTALLER_CERT_PASSWORD) to repo secrets."
             exit 1
           fi
           KEYCHAIN="$RUNNER_TEMP/millrace.keychain-db"
@@ -52,7 +56,7 @@ jobs:
             security import "$f" -P "$2" -A -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/productsign
             rm -f "$f"
           }
-          [ -n "$MACOS_CERT_P12" ] && import "$MACOS_CERT_P12" "$MACOS_CERT_PASSWORD"
+          import "$MACOS_CERT_P12" "$MACOS_CERT_PASSWORD"
           import "$MACOS_INSTALLER_CERT_P12" "$MACOS_INSTALLER_CERT_PASSWORD"
 
           security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s -k "$KPW" "$KEYCHAIN" >/dev/null
@@ -61,7 +65,8 @@ jobs:
           APP_ID="$(security find-identity -v "$KEYCHAIN" | awk '/Developer ID Application/{print $2; exit}')"
           INST_ID="$(security find-identity -v "$KEYCHAIN" | awk '/Developer ID Installer/{print $2; exit}')"
           if [ -z "$INST_ID" ]; then echo "::error::no Developer ID Installer identity in MACOS_INSTALLER_CERT_P12"; exit 1; fi
-          [ -n "$APP_ID" ] && echo "MILLRACE_SIGN_IDENTITY=$APP_ID" >> "$GITHUB_ENV"
+          if [ -z "$APP_ID" ]; then echo "::error::no Developer ID Application identity in MACOS_CERT_P12 (the app would be ad-hoc signed -> notarization Invalid)"; exit 1; fi
+          echo "MILLRACE_SIGN_IDENTITY=$APP_ID" >> "$GITHUB_ENV"
           echo "MILLRACE_INSTALLER_IDENTITY=$INST_ID" >> "$GITHUB_ENV"
           echo "MILLRACE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "imported app=${APP_ID:-<none>} installer=$INST_ID"
@@ -80,9 +85,22 @@ jobs:
         if: env.APPLE_ID != ''
         run: |
           PKG="$GITHUB_WORKSPACE/Millrace.pkg"
-          xcrun notarytool submit "$PKG" \
+          # notarytool submit --wait exits 0 even when the result is Invalid, so
+          # check the status ourselves and dump Apple's per-issue log on failure.
+          OUT="$(xcrun notarytool submit "$PKG" \
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
-            --wait
+            --output-format json --wait)"
+          echo "$OUT"
+          STATUS="$(echo "$OUT" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))')"
+          SID="$(echo "$OUT" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))')"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::group::notarytool log ($STATUS)"
+            xcrun notarytool log "$SID" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" || true
+            echo "::endgroup::"
+            echo "::error::notarization $STATUS — see the log above for the failing issues"
+            exit 1
+          fi
           xcrun stapler staple "$PKG"
           xcrun stapler validate "$PKG"
 
