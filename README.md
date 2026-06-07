@@ -1,5 +1,7 @@
 # Millrace (menu-bar app)
 
+> Part of [**millrace**](https://millrace.me) — local-first LLM inference on Apple Silicon.
+
 The **Millrace** macOS menu-bar app — the desktop companion for the
 [millrace inference server](https://github.com/millrace/mojo-backend) (the
 pure-Mojo local LLM engine). It lives in the menu bar and shows whether the
