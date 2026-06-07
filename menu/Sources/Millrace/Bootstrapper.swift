@@ -257,9 +257,14 @@ final class Bootstrapper: ObservableObject {
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        // `do script` runs its text as a shell command line, so the script path
+        // (which lives under "Application Support" — note the space) must be shell-
+        // quoted, or zsh splits it at the space. Single-quote it (the path has no
+        // single quotes).
+        let cmd = "'\(script.path)'"
         try run("/usr/bin/osascript",
                 ["-e", "tell application \"Terminal\" to activate",
-                 "-e", "tell application \"Terminal\" to do script \"\(script.path)\""])
+                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
     /// Build the opencode provider config the way mojo-backend/opencode_config.py
