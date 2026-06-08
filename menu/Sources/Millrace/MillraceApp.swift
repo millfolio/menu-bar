@@ -25,6 +25,7 @@ struct MenuContent: View {
     @ObservedObject var bootstrapper: Bootstrapper
 
     private let engineRepoURL = "https://github.com/millrace/mojo-backend"
+    private let headgateRepoURL = "https://github.com/millrace/headgate"
 
     var body: some View {
         Text(client.status.title)
@@ -37,6 +38,10 @@ struct MenuContent: View {
         Divider()
 
         engineActions
+
+        Divider()
+
+        headgateActions
 
         Divider()
 
@@ -90,6 +95,21 @@ struct MenuContent: View {
 
         Button("View engine on GitHub") {
             if let url = URL(string: engineRepoURL) { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    /// headgate (privacy harness): install (download toolchain + bundle, build) and
+    /// start (open a ready-to-use Terminal — it's a one-shot CLI, not a daemon).
+    @ViewBuilder
+    private var headgateActions: some View {
+        if bootstrapper.isHeadgateInstalled {
+            Button("Start headgate…") { bootstrapper.startHeadgate() }
+        } else {
+            Button("Install headgate…") { bootstrapper.installHeadgate() }
+                .disabled(bootstrapper.isBusy)
+        }
+        Button("View headgate on GitHub") {
+            if let url = URL(string: headgateRepoURL) { NSWorkspace.shared.open(url) }
         }
     }
 

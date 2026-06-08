@@ -62,6 +62,28 @@ final class Bootstrapper: ObservableObject {
     private let runnerZipURL =
         URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/runner.zip")!
 
+    // ── headgate (privacy harness) ─────────────────────────────────────────────
+    // headgate is a separate engine on a DIFFERENT Mojo nightly than the runner
+    // (its flare/json forks don't build on the runner's), so it gets its own
+    // toolchain + install tree. It's a one-shot CLI (not a daemon), so "start"
+    // opens a ready-to-use Terminal rather than launching a server.
+    static let headgateMojoVersion = "1.0.0b2.dev2026060706"
+    private let headgateZipURL =
+        URL(string: "https://github.com/millrace/headgate/releases/latest/download/headgate.zip")!
+    private var headgateMojoCompilerURL: URL {
+        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.headgateMojoVersion)-release.conda")!
+    }
+    private var headgateMojoPythonURL: URL {
+        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.headgateMojoVersion)-release.conda")!
+    }
+    private var headgateMojoPrefix: URL { support.appendingPathComponent("headgate-mojo", isDirectory: true) }
+    private var headgateRoot: URL { support.appendingPathComponent("headgate-engine", isDirectory: true) }
+    /// headgate checkout inside the unpacked bundle (sibling of flare/json/minja2).
+    private var headgateDir: URL { headgateRoot.appendingPathComponent("headgate", isDirectory: true) }
+    private var headgateBin: URL { headgateDir.appendingPathComponent("build/headgate") }
+    /// The built headgate binary is present.
+    var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
+
     // ── install locations ─────────────────────────────────────────────────────
     private var support: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -426,6 +448,150 @@ final class Bootstrapper: ObservableObject {
         var env = runtimeEnv()
         env["HF_HOME"] = hfHome.path
         try run(dl, [Self.model], cwd: backendDir, env: env)
+    }
+
+    // ── headgate: install ──────────────────────────────────────────────────────
+    /// Download headgate's Mojo toolchain + source bundle and build it. Separate
+    /// from the runner: headgate is on a different nightly and ships its own
+    /// vendored flare/json/minja2 + prebuilt FFI shims.
+    func installHeadgate() {
+        guard !isBusy else { return }
+        phase = .running("Starting…")
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.provisionHeadgate()
+        }
+    }
+
+    private func provisionHeadgate() async {
+        do {
+            let fm = FileManager.default
+            for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
+                try fm.createDirectory(at: d, withIntermediateDirectories: true)
+            }
+            logHeader("Install headgate")
+
+            // 1. Mojo toolchain (headgate's nightly — distinct from the engine's).
+            if !fm.fileExists(atPath: headgateMojoPrefix.appendingPathComponent("bin/mojo").path) {
+                await set("Downloading Mojo compiler for headgate (~70 MB)…")
+                let compiler = try await download(headgateMojoCompilerURL, name: "headgate-mojo-compiler.conda")
+                await set("Extracting Mojo…")
+                try extractConda(compiler, into: headgateMojoPrefix)
+                let py = try await download(headgateMojoPythonURL, name: "headgate-mojo-python.conda")
+                try extractConda(py, into: headgateMojoPrefix)
+            }
+            try relocateMojoPrefix(headgateMojoPrefix)
+
+            // 2. headgate source bundle (headgate + vendored flare/json/minja2 +
+            //    prebuilt FFI shims), published by headgate CI.
+            await set("Downloading headgate source…")
+            let zip = try await download(headgateZipURL, name: "headgate.zip")
+            await set("Unpacking headgate…")
+            try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", headgateRoot.path])
+            guard fm.fileExists(atPath: headgateDir.appendingPathComponent("src/headgate.mojo").path) else {
+                throw BootstrapError.step("unpack", "headgate zip missing headgate/src/headgate.mojo")
+            }
+
+            // 3. Build headgate against its vendored siblings.
+            await set("Locating Python…")
+            let python = try findPython()
+            await set("Building headgate (first run, ~1 min)…")
+            let mojo = headgateMojoPrefix.appendingPathComponent("bin/mojo").path
+            try run(mojo, ["build", "src/headgate.mojo",
+                           "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
+                           "-o", "build/headgate"],
+                    cwd: headgateDir, env: headgateMojoEnv(python: python))
+
+            // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare
+            //    finds them via $CONDA_PREFIX/lib at runtime — headgate runs WITH
+            //    CONDA_PREFIX set (it shells `mojo build` for the sandboxed
+            //    generated-code compile), unlike the always-serving runner.
+            try installHeadgateShims()
+
+            await set(done: true)
+        } catch {
+            await MainActor.run { self.phase = .failed(humanError(error)) }
+        }
+    }
+
+    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the headgate
+    /// Mojo prefix's lib/, where flare's `$CONDA_PREFIX/lib` lookup finds them.
+    private func installHeadgateShims() throws {
+        let fm = FileManager.default
+        let libDir = headgateMojoPrefix.appendingPathComponent("lib", isDirectory: true)
+        try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
+        let buildDir = headgateDir.appendingPathComponent("build", isDirectory: true)
+        for name in (try? fm.contentsOfDirectory(atPath: buildDir.path)) ?? []
+        where name.hasSuffix(".so") || name.hasSuffix(".dylib") {
+            let dst = libDir.appendingPathComponent(name)
+            try? fm.removeItem(at: dst)
+            try fm.copyItem(at: buildDir.appendingPathComponent(name), to: dst)
+        }
+    }
+
+    /// Same prefix-relocation as `relocateMojo`, for an arbitrary Mojo prefix.
+    private func relocateMojoPrefix(_ prefix: URL) throws {
+        let cfg = prefix.appendingPathComponent("share/max/modular.cfg")
+        guard var text = try? String(contentsOf: cfg, encoding: .utf8) else {
+            throw BootstrapError.step("relocate", "modular.cfg missing after extract")
+        }
+        guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix("package_root") }),
+              let eq = line.firstIndex(of: "=") else {
+            throw BootstrapError.step("relocate", "no package_root in modular.cfg")
+        }
+        let placeholder = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+        guard !placeholder.isEmpty, placeholder != prefix.path else { return }
+        text = text.replacingOccurrences(of: placeholder, with: prefix.path)
+        try text.write(to: cfg, atomically: true, encoding: .utf8)
+        appendLog("relocated mojo prefix: \(placeholder) -> \(prefix.path)\n")
+    }
+
+    /// `mojo build` env for the headgate toolchain prefix.
+    private func headgateMojoEnv(python: URL) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extraPath = "\(python.deletingLastPathComponent().path):\(headgateMojoPrefix.appendingPathComponent("bin").path)"
+        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        env["CONDA_PREFIX"] = headgateMojoPrefix.path
+        env["MODULAR_HOME"] = headgateMojoPrefix.appendingPathComponent("share/max").path
+        return env
+    }
+
+    // ── headgate: start (open a ready-to-use Terminal) ──────────────────────────
+    /// headgate is a one-shot CLI, so "start" opens a Terminal in the install dir
+    /// with the toolchain env pre-set — the user sets ANTHROPIC_API_KEY, points it
+    /// at their data, and runs `./build/headgate`.
+    func startHeadgate() {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.launchHeadgateTerminal() }
+            catch { await MainActor.run { self.phase = .failed("headgate: \(humanError(error))") } }
+        }
+    }
+
+    private func launchHeadgateTerminal() async throws {
+        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
+        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
+        // headgate runs WITH its toolchain on CONDA_PREFIX/PATH (it shells `mojo
+        // build` for the sandboxed generated-code compile). Single-quote paths
+        // (they live under "Application Support" — note the space).
+        let script = support.appendingPathComponent("run-headgate.sh")
+        let body = """
+        #!/bin/bash
+        cd '\(headgateDir.path)'
+        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
+        export MODULAR_HOME='\(modularHome)'
+        export PATH='\(mojoBin)':"$PATH"
+        echo 'headgate is built at ./build/headgate'
+        echo 'Set a key and run, e.g.:'
+        echo '  export ANTHROPIC_API_KEY=...   # or use HEADGATE_MOCK=1 / HEADGATE_REMOTE_TOKEN_BUDGET=0'
+        echo '  ./build/headgate               # runs over ./demo/data'
+        exec /bin/bash
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let cmd = "'\(script.path)'"
+        try run("/usr/bin/osascript",
+                ["-e", "tell application \"Terminal\" to activate",
+                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
