@@ -3,9 +3,9 @@ class Millrace < Formula
   homepage "https://github.com/millrace/app"
   # version / url / sha256 are bumped per release by dist/homebrew/update-formula.sh
   # (downloads the millrace-macos.tar.gz release asset and fills in its checksum).
-  version "0.4.5"
-  url "https://github.com/millrace/app/releases/download/v0.4.5/millrace-macos.tar.gz"
-  sha256 "5455c9f4677967420f206e54ebe776000b49900093dc76b6a7d4016c8d79c5f7"
+  version "0.4.6"
+  url "https://github.com/millrace/app/releases/download/v0.4.6/millrace-macos.tar.gz"
+  sha256 "b8e2b98de29d234a337759d15f74980032d6fe251a8d03b59641ae5cacc93b6e"
 
   depends_on :macos
 
