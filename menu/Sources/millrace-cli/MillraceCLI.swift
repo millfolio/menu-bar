@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ArgumentParser
 import MillraceCore
 
@@ -113,15 +114,20 @@ struct Headgate: AsyncParsableCommand {
         @MainActor func run() async throws {
             let boot = Bootstrapper()
             let script = try boot.writeHeadgateScript()
-            // Already attached to a terminal → run the launcher in place (it execs
-            // an interactive shell with the toolchain env set, in the install dir).
+            // Already attached to a terminal → REPLACE this process with the
+            // launcher (it execs an interactive shell with the toolchain env set,
+            // in the install dir). execv is essential: a child Process would land
+            // outside the terminal's foreground process group and get SIGTTIN on
+            // read — i.e. "can't type". Replacing the image hands the shell our
+            // controlling terminal, so it's a real interactive session.
             // No TTY (e.g. invoked from the GUI) → fall back to a new Terminal.
-            if isatty(FileHandle.standardOutput.fileDescriptor) != 0 {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/bash")
-                p.arguments = [script.path]   // inherits our stdio → the current TTY
-                try p.run()
-                p.waitUntilExit()
+            if isatty(FileHandle.standardInput.fileDescriptor) != 0 {
+                let argv: [UnsafeMutablePointer<CChar>?] =
+                    [strdup("/bin/bash"), strdup(script.path), nil]
+                execv("/bin/bash", argv)
+                // Only reached if execv failed.
+                throw BootstrapError.step("headgate start",
+                                          "exec /bin/bash failed: \(String(cString: strerror(errno)))")
             } else {
                 try await boot.launchHeadgateTerminal()
             }

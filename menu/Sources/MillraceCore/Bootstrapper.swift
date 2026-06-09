@@ -667,11 +667,8 @@ public final class Bootstrapper: ObservableObject {
         export CONDA_PREFIX='\(headgateMojoPrefix.path)'
         export MODULAR_HOME='\(modularHome)'
         export PATH='\(mojoBin)':"$PATH"
-        echo 'headgate is built at ./build/headgate'
-        echo 'Set a key and run, e.g.:'
-        echo '  export ANTHROPIC_API_KEY=...   # or use HEADGATE_MOCK=1 / HEADGATE_REMOTE_TOKEN_BUDGET=0'
-        echo '  ./build/headgate               # runs over ./demo/data'
-        exec /bin/bash
+        echo 'headgate ready — set ANTHROPIC_API_KEY (or HEADGATE_MOCK=1), then run: ./build/headgate'
+        exec "${SHELL:-/bin/bash}" -i
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
