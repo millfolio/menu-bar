@@ -109,21 +109,32 @@ struct Headgate: AsyncParsableCommand {
 
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Drop into a ready-to-use shell in the headgate install dir.",
-            discussion: "Runs in the current terminal when there is one; otherwise opens a new Terminal window.")
+            abstract: "Run headgate in this terminal: a one-shot task, or an interactive REPL.",
+            discussion: """
+            With a TASK, runs it once and prints the answer; with no task, starts \
+            headgate's interactive REPL. Either way headgate takes over this \
+            terminal's stdin/stdout. With no controlling terminal (e.g. launched \
+            from the menu app) it opens a new Terminal instead.
+            """)
+        @Argument(parsing: .remaining,
+                  help: "Task to run once. Omit for an interactive REPL.")
+        var task: [String] = []
+
         @MainActor func run() async throws {
             let boot = Bootstrapper()
             let script = try boot.writeHeadgateScript()
-            // Already attached to a terminal → REPLACE this process with the
-            // launcher (it execs an interactive shell with the toolchain env set,
-            // in the install dir). execv is essential: a child Process would land
-            // outside the terminal's foreground process group and get SIGTTIN on
-            // read — i.e. "can't type". Replacing the image hands the shell our
-            // controlling terminal, so it's a real interactive session.
-            // No TTY (e.g. invoked from the GUI) → fall back to a new Terminal.
+            // Attached to a terminal → REPLACE this process with the launcher (it
+            // execs the headgate binary). execv is essential: a child Process would
+            // land outside the terminal's foreground process group and get SIGTTIN
+            // on read. Replacing the image hands headgate our controlling terminal,
+            // so its REPL (or one-shot run) drives stdin/stdout directly. Any TASK
+            // is forwarded as args → the launcher's `"$@"` → headgate.
+            // No TTY (e.g. the GUI) → fall back to a new Terminal.
             if isatty(FileHandle.standardInput.fileDescriptor) != 0 {
-                let argv: [UnsafeMutablePointer<CChar>?] =
-                    [strdup("/bin/bash"), strdup(script.path), nil]
+                var argv: [UnsafeMutablePointer<CChar>?] =
+                    [strdup("/bin/bash"), strdup(script.path)]
+                for t in task { argv.append(strdup(t)) }
+                argv.append(nil)
                 execv("/bin/bash", argv)
                 // Only reached if execv failed.
                 throw BootstrapError.step("headgate start",

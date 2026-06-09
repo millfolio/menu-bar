@@ -124,7 +124,8 @@ public final class Bootstrapper: ObservableObject {
       "remote_model": "claude-sonnet-4-6",
       "remote_token_budget": 200000,
       "mock": false,
-      "use_local_summary": false
+      "use_local_summary": false,
+      "data_dir": ""
     }
     """
 
@@ -652,9 +653,10 @@ public final class Bootstrapper: ObservableObject {
 
     /// Write the `run-headgate.sh` launcher — sets the toolchain env (headgate
     /// shells `mojo build` for the sandboxed generated-code compile), cd's to the
-    /// install dir, prints usage, then drops into an interactive shell — and return
-    /// its path. Shared by the menu app (opens it in a NEW Terminal) and the CLI
-    /// (execs it in the CURRENT terminal when there is one).
+    /// install dir, and execs the headgate binary, forwarding any args (`"$@"`) as
+    /// the task. Shared by the menu app (runs it in a NEW Terminal) and the CLI
+    /// (execs it in the CURRENT terminal so headgate takes over stdin/stdout — a
+    /// one-shot run with a task, or an interactive REPL with none). Returns its path.
     @discardableResult
     public func writeHeadgateScript() throws -> URL {
         let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
@@ -667,8 +669,7 @@ public final class Bootstrapper: ObservableObject {
         export CONDA_PREFIX='\(headgateMojoPrefix.path)'
         export MODULAR_HOME='\(modularHome)'
         export PATH='\(mojoBin)':"$PATH"
-        echo 'headgate ready — set ANTHROPIC_API_KEY (or HEADGATE_MOCK=1), then run: ./build/headgate'
-        exec "${SHELL:-/bin/bash}" -i
+        exec ./build/headgate "$@"
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
