@@ -108,9 +108,23 @@ struct Headgate: AsyncParsableCommand {
 
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Open a ready-to-use Terminal in the headgate install dir.")
+            abstract: "Drop into a ready-to-use shell in the headgate install dir.",
+            discussion: "Runs in the current terminal when there is one; otherwise opens a new Terminal window.")
         @MainActor func run() async throws {
-            try await Bootstrapper().launchHeadgateTerminal()
+            let boot = Bootstrapper()
+            let script = try boot.writeHeadgateScript()
+            // Already attached to a terminal → run the launcher in place (it execs
+            // an interactive shell with the toolchain env set, in the install dir).
+            // No TTY (e.g. invoked from the GUI) → fall back to a new Terminal.
+            if isatty(FileHandle.standardOutput.fileDescriptor) != 0 {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/bash")
+                p.arguments = [script.path]   // inherits our stdio → the current TTY
+                try p.run()
+                p.waitUntilExit()
+            } else {
+                try await boot.launchHeadgateTerminal()
+            }
         }
     }
 

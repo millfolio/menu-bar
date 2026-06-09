@@ -650,12 +650,16 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
-    public func launchHeadgateTerminal() async throws {
+    /// Write the `run-headgate.sh` launcher — sets the toolchain env (headgate
+    /// shells `mojo build` for the sandboxed generated-code compile), cd's to the
+    /// install dir, prints usage, then drops into an interactive shell — and return
+    /// its path. Shared by the menu app (opens it in a NEW Terminal) and the CLI
+    /// (execs it in the CURRENT terminal when there is one).
+    @discardableResult
+    public func writeHeadgateScript() throws -> URL {
         let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
         let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
-        // headgate runs WITH its toolchain on CONDA_PREFIX/PATH (it shells `mojo
-        // build` for the sandboxed generated-code compile). Single-quote paths
-        // (they live under "Application Support" — note the space).
+        // Single-quote paths (they live under "Application Support" — note the space).
         let script = support.appendingPathComponent("run-headgate.sh")
         let body = """
         #!/bin/bash
@@ -671,6 +675,11 @@ public final class Bootstrapper: ObservableObject {
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    public func launchHeadgateTerminal() async throws {
+        let script = try writeHeadgateScript()
         let cmd = "'\(script.path)'"
         try run("/usr/bin/osascript",
                 ["-e", "tell application \"Terminal\" to activate",
