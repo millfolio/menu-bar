@@ -104,6 +104,30 @@ jobs:
           xcrun stapler staple "$PKG"
           xcrun stapler validate "$PKG"
 
+      # Build the `millrace` CLI as a universal (arm64 + x86_64) binary, sign it
+      # with the same Developer ID Application identity + hardened runtime, and
+      # tar it for the Homebrew tap. (No notarization: a Developer-ID-signed CLI
+      # runs fine from the terminal, and Homebrew doesn't quarantine tap
+      # downloads. The target/binary is `millrace-cli`; we install it as
+      # `millrace` to avoid colliding with the `Millrace` app on case-insensitive
+      # filesystems.) Done while the signing keychain is still alive.
+      - name: Build millrace CLI (universal, signed)
+        run: |
+          cd menu
+          swift build -c release --arch arm64 --arch x86_64 --product millrace-cli
+          BIN="$(swift build -c release --arch arm64 --arch x86_64 --product millrace-cli --show-bin-path)/millrace-cli"
+          [ -x "$BIN" ] || { echo "::error::CLI binary not found at $BIN"; exit 1; }
+          STAGE="$RUNNER_TEMP/millrace-cli"; mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/millrace"
+          if [ -n "${MILLRACE_SIGN_IDENTITY:-}" ]; then
+            codesign --force --options runtime --timestamp --sign "$MILLRACE_SIGN_IDENTITY" "$STAGE/millrace"
+          else
+            echo "==> ad-hoc signing CLI (no Developer ID identity)"; codesign --force --sign - "$STAGE/millrace" || true
+          fi
+          codesign --verify --verbose "$STAGE/millrace" || true
+          tar -C "$STAGE" -czf "$GITHUB_WORKSPACE/millrace-macos.tar.gz" millrace
+          echo "millrace-macos.tar.gz sha256:"; shasum -a 256 "$GITHUB_WORKSPACE/millrace-macos.tar.gz"
+
       - name: Clean up keychain
         if: always()
         run: security delete-keychain "${MILLRACE_KEYCHAIN:-$RUNNER_TEMP/millrace.keychain-db}" || true
@@ -115,12 +139,22 @@ jobs:
           path: Millrace.pkg
           if-no-files-found: error
 
-      # On a version tag (e.g. v0.3.1), publish a Release with the .pkg attached.
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: millrace-cli
+          path: millrace-macos.tar.gz
+          if-no-files-found: error
+
+      # On a version tag (e.g. v0.3.1), publish a Release with the .pkg + CLI
+      # tarball attached.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: Millrace.pkg
+          files: |
+            Millrace.pkg
+            millrace-macos.tar.gz
           body: |
             The Millrace menu-bar app for the millrace inference server.
 

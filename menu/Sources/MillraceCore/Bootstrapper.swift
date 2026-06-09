@@ -1,33 +1,38 @@
 import Foundation
 import AppKit
 
-/// Drives the local engine lifecycle from the menu bar, as three explicit steps:
+/// Drives the local engine lifecycle, as three explicit steps:
 ///
-///   1. **Download runner** — fetch the official Mojo compiler+runtime from
+///   1. **Install server** — fetch the official Mojo compiler+runtime from
 ///      Modular's conda channel (so the *user* accepts Modular's license — we
 ///      never redistribute it), unpack our engine source zip (mojo-backend +
 ///      minja2 + flare + a prebuilt libflare_tls.so), build the server with
 ///      `mojo build`, then download the default model's weights with the engine's
 ///      own native-Mojo downloader (no huggingface_hub).
-///   2. **Start runner** — launch the built server against the downloaded model.
+///   2. **Start server** — launch the built server (via a launchd LaunchAgent, so
+///      the CLI and the menu app share one managed process).
 ///   3. **Start opencode** — point opencode at the running server (new Terminal).
 ///
 /// Everything lives under ~/Library/Application Support/Millrace, including the
 /// model weights (HF_HOME=<support>/hf), so uninstall is a single directory.
+///
+/// This type is UI-agnostic on purpose: the menu-bar app observes it as an
+/// `ObservableObject` (via `phase`/`serverRunning`), while the `millrace` CLI
+/// drives the same methods and streams progress through `onProgress`.
 ///
 /// NOTE: the Mojo fetch is "rattler-by-URL" — we don't link the rattler crate, we
 /// GET the pinned `.conda` packages (a .conda is a zip of zstd tarballs) and
 /// extract them with the system `unzip`/`tar`. Keep `mojoVersion` in sync with
 /// mojo-backend/pixi.lock.
 @MainActor
-final class Bootstrapper: ObservableObject {
-    enum Phase: Equatable {
+public final class Bootstrapper: ObservableObject {
+    public enum Phase: Equatable {
         case idle
         case running(String)
         case done
         case failed(String)
 
-        var message: String? {
+        public var message: String? {
             switch self {
             case .idle, .done: return nil
             case .running(let m): return m
@@ -36,20 +41,28 @@ final class Bootstrapper: ObservableObject {
         }
     }
 
-    /// Progress of the long-running "Download runner" provisioning step.
-    @Published var phase: Phase = .idle
-    /// True while the engine server we launched is running.
-    @Published var serverRunning = false
+    /// Progress of the long-running provisioning steps.
+    @Published public var phase: Phase = .idle
+    /// True while the engine server's LaunchAgent is loaded.
+    @Published public var serverRunning = false
 
-    var isBusy: Bool { if case .running = phase { return true }; return false }
+    /// Optional progress sink — every status message is forwarded here as well as
+    /// to `phase`, so a non-UI driver (the CLI) can stream the same text.
+    public var onProgress: ((String) -> Void)?
+
+    public init() {
+        refreshServerRunning()
+    }
+
+    public var isBusy: Bool { if case .running = phase { return true }; return false }
 
     // ── pinned manifest (keep in sync with mojo-backend/pixi.lock) ─────────────
-    static let mojoVersion = "1.0.0b2.dev2026053106"
-    static let condaChannel = "https://conda.modular.com/max-nightly"
-    /// Default model served by the runner. The 3B is int4-friendly and the
+    public static let mojoVersion = "1.0.0b2.dev2026053106"
+    public static let condaChannel = "https://conda.modular.com/max-nightly"
+    /// Default model served by the server. The 3B is int4-friendly and the
     /// quality target; its tokenizer.json is read directly by the engine.
-    static let model = "Qwen/Qwen2.5-3B-Instruct"
-    static let modelSlug = "Qwen--Qwen2.5-3B-Instruct"
+    public static let model = "Qwen/Qwen2.5-3B-Instruct"
+    public static let modelSlug = "Qwen--Qwen2.5-3B-Instruct"
 
     private var mojoCompilerURL: URL {
         URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.mojoVersion)-release.conda")!
@@ -57,17 +70,18 @@ final class Bootstrapper: ObservableObject {
     private var mojoPythonURL: URL {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
-    /// The engine ("runner") source bundle (mojo-backend + vendored minja2/flare +
-    /// prebuilt libflare_tls.so), published by mojo-backend CI.
-    private let runnerZipURL =
+    /// The engine ("server") source bundle (mojo-backend + vendored minja2/flare +
+    /// prebuilt libflare_tls.so), published by mojo-backend CI. The asset is still
+    /// named `runner.zip` (wire name retained for now).
+    private let serverZipURL =
         URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/runner.zip")!
 
     // ── headgate (privacy harness) ─────────────────────────────────────────────
-    // headgate is a separate engine on a DIFFERENT Mojo nightly than the runner
-    // (its flare/json forks don't build on the runner's), so it gets its own
+    // headgate is a separate engine on a DIFFERENT Mojo nightly than the server
+    // (its flare/json forks don't build on the server's), so it gets its own
     // toolchain + install tree. It's a one-shot CLI (not a daemon), so "start"
     // opens a ready-to-use Terminal rather than launching a server.
-    static let headgateMojoVersion = "1.0.0b2.dev2026060706"
+    public static let headgateMojoVersion = "1.0.0b2.dev2026060706"
     private let headgateZipURL =
         URL(string: "https://github.com/millrace/headgate/releases/latest/download/headgate.zip")!
     private var headgateMojoCompilerURL: URL {
@@ -82,7 +96,7 @@ final class Bootstrapper: ObservableObject {
     private var headgateDir: URL { headgateRoot.appendingPathComponent("headgate", isDirectory: true) }
     private var headgateBin: URL { headgateDir.appendingPathComponent("build/headgate") }
     /// The built headgate binary is present.
-    var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
+    public var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
 
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
@@ -142,23 +156,21 @@ final class Bootstrapper: ObservableObject {
     private var serverBin: URL { backendDir.appendingPathComponent("build/server") }
     /// All subprocess output (mojo build, weights download, the running server)
     /// is appended here so errors that flash by in the menu can be read in full.
-    var logFileURL: URL { support.appendingPathComponent("Millrace.log") }
-    var hasLog: Bool { FileManager.default.fileExists(atPath: logFileURL.path) }
+    public var logFileURL: URL { support.appendingPathComponent("Millrace.log") }
+    public var hasLog: Bool { FileManager.default.fileExists(atPath: logFileURL.path) }
 
     /// The built engine server binary is present.
-    var isRunnerInstalled: Bool {
+    public var isServerInstalled: Bool {
         FileManager.default.isExecutableFile(atPath: serverBin.path)
     }
     /// The default model's weights have been fully downloaded (refs/main is the
     /// downloader's last write, so its presence means the snapshot is complete).
-    var weightsPresent: Bool {
+    public var weightsPresent: Bool {
         FileManager.default.fileExists(
             atPath: hfHome.appendingPathComponent("hub/models--\(Self.modelSlug)/refs/main").path)
     }
     /// Ready to launch: engine built and weights downloaded.
-    var canStartRunner: Bool { isRunnerInstalled && weightsPresent && !serverRunning }
-
-    private var serverProcess: Process?
+    public var canStartServer: Bool { isServerInstalled && weightsPresent && !serverRunning }
 
     // ── logging ──────────────────────────────────────────────────────────────
     /// Ensure the log file (and its directory) exist; returns the path.
@@ -191,120 +203,151 @@ final class Bootstrapper: ObservableObject {
     }
 
     /// Open the log in the user's default viewer (Console/TextEdit).
-    func openLog() {
+    public func openLog() {
         NSWorkspace.shared.open(ensureLog())
     }
 
-    // ── step 1: download runner (+ weights) ─────────────────────────────────────
-    func downloadRunner() {
+    // ── step 1: install server (+ weights) ──────────────────────────────────────
+    /// Menu-app entry point: fire-and-forget, drives `phase`. The CLI calls the
+    /// throwing `installServer()` directly.
+    public func downloadServer() {
         guard !isBusy else { return }
         phase = .running("Starting…")
         Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.provision()
+            guard let self else { return }
+            do { try await self.installServer(); await self.set(done: true) }
+            catch { await self.set(failed: humanError(error)) }
         }
     }
 
-    private func provision() async {
-        do {
-            let fm = FileManager.default
-            for d in [support, mojoPrefix, engineRoot, cacheDir, hfHome] {
-                try fm.createDirectory(at: d, withIntermediateDirectories: true)
-            }
-            logHeader("Download runner")
-
-            if !fm.fileExists(atPath: mojoPrefix.appendingPathComponent("bin/mojo").path) {
-                await set("Downloading Mojo compiler (~70 MB)…")
-                let compiler = try await download(mojoCompilerURL, name: "mojo-compiler.conda")
-                await set("Extracting Mojo…")
-                try extractConda(compiler, into: mojoPrefix)
-                let py = try await download(mojoPythonURL, name: "mojo-python.conda")
-                try extractConda(py, into: mojoPrefix)
-            }
-            try relocateMojo()   // rewrite modular.cfg's baked placeholder prefix
-
-            await set("Downloading engine source…")
-            let zip = try await download(runnerZipURL, name: "runner.zip")
-            await set("Unpacking engine…")
-            try unpackZip(zip, into: engineRoot)
-
-            await set("Locating Python…")
-            let python = try findPython()
-
-            await set("Building engine (first run, ~1 min)…")
-            try buildBinary(python: python, source: "src/server.mojo",
-                            args: ["-I", "../minja2/src", "-I", "../flare"], out: "build/server")
-
-            if !weightsPresent {
-                await set("Building downloader…")
-                try buildBinary(python: python, source: "src/download.mojo",
-                                args: ["-I", "../flare"], out: "build/download")
-                await set("Downloading model weights (\(Self.model), several GB)…")
-                try downloadWeights()
-            }
-
-            ensureConfig(at: millraceConfigURL, Self.millraceConfigDefault)
-            await set(done: true)
-        } catch {
-            await MainActor.run { self.phase = .failed(humanError(error)) }
+    /// Provision the Mojo toolchain, engine source, build, and weights. Throws on
+    /// the first failure (the CLI surfaces it; the menu wrapper maps it to `phase`).
+    public func installServer() async throws {
+        let fm = FileManager.default
+        for d in [support, mojoPrefix, engineRoot, cacheDir, hfHome] {
+            try fm.createDirectory(at: d, withIntermediateDirectories: true)
         }
+        logHeader("Install server")
+
+        if !fm.fileExists(atPath: mojoPrefix.appendingPathComponent("bin/mojo").path) {
+            set("Downloading Mojo compiler (~70 MB)…")
+            let compiler = try await download(mojoCompilerURL, name: "mojo-compiler.conda")
+            set("Extracting Mojo…")
+            try extractConda(compiler, into: mojoPrefix)
+            let py = try await download(mojoPythonURL, name: "mojo-python.conda")
+            try extractConda(py, into: mojoPrefix)
+        }
+        try relocateMojoPrefix(mojoPrefix)   // rewrite modular.cfg's baked placeholder prefix
+
+        set("Downloading engine source…")
+        let zip = try await download(serverZipURL, name: "runner.zip")
+        set("Unpacking engine…")
+        try unpackZip(zip, into: engineRoot)
+
+        set("Locating Python…")
+        let python = try findPython()
+
+        set("Building engine (first run, ~1 min)…")
+        try buildBinary(python: python, source: "src/server.mojo",
+                        args: ["-I", "../minja2/src", "-I", "../flare"], out: "build/server")
+
+        if !weightsPresent {
+            set("Building downloader…")
+            try buildBinary(python: python, source: "src/download.mojo",
+                            args: ["-I", "../flare"], out: "build/download")
+            set("Downloading model weights (\(Self.model), several GB)…")
+            try downloadWeights()
+        }
+
+        ensureConfig(at: millraceConfigURL, Self.millraceConfigDefault)
     }
 
-    // ── step 2: start / stop runner ─────────────────────────────────────────────
-    func startRunner() {
-        guard canStartRunner, serverProcess == nil else { return }
-        do {
-            let p = Process()
-            p.executableURL = serverBin
-            p.currentDirectoryURL = backendDir   // hardcoded relative data paths resolve here
-            p.arguments = [Self.model]           // resolved from the HF cache below
-            var env = runtimeEnv()
-            env["HF_HOME"] = hfHome.path
-            p.environment = env
-            // Stream the server's stdout/stderr into the shared log.
-            logHeader("Start runner: \(Self.model)")
-            if let h = try? FileHandle(forWritingTo: ensureLog()) {
-                h.seekToEndOfFile()
-                p.standardOutput = h
-                p.standardError = h
-            }
-            // terminationHandler is @Sendable and fires on an arbitrary thread.
-            // Unwrap to a strong local first, then hop to the main actor — so the
-            // concurrent Task captures an immutable `self`, not the closure's
-            // captured weak `var` (a hard error under strict concurrency).
-            p.terminationHandler = { [weak self] _ in
-                guard let self else { return }
-                Task { @MainActor in
-                    self.serverProcess = nil
-                    self.serverRunning = false
-                }
-            }
-            try p.run()
-            serverProcess = p
-            serverRunning = true
-        } catch {
-            phase = .failed("start runner: \(humanError(error))")
+    // ── step 2: start / stop server (launchd LaunchAgent) ────────────────────────
+    // The server runs as a per-user LaunchAgent (me.millrace.server) instead of a
+    // child Process, so a CLI `millrace server start` and the menu app's "Start
+    // server" drive the SAME managed process — either surface can start/stop/see it.
+    public static let serverLabel = "me.millrace.server"
+    private var launchAgentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(Self.serverLabel).plist")
+    }
+    private var guiDomain: String { "gui/\(getuid())" }
+
+    /// Start the server LaunchAgent. Idempotent: re-bootstraps a fresh plist.
+    public func startServer() throws {
+        guard isServerInstalled, weightsPresent else {
+            throw BootstrapError.step("start server", "engine not installed or weights missing — run install first")
         }
+        try writeLaunchAgent()
+        logHeader("Start server: \(Self.model)")
+        // Replace any prior instance, then load (RunAtLoad starts it).
+        _ = try? runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
+        try run("/bin/launchctl", ["bootstrap", guiDomain, launchAgentURL.path])
+        serverRunning = true
     }
 
-    func stopRunner() {
-        serverProcess?.terminate()
-        serverProcess = nil
+    /// Stop the server LaunchAgent (no-op if not loaded).
+    public func stopServer() throws {
+        let rc = try runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
+        if rc != 0 { appendLog("[launchctl bootout exited \(rc) — not loaded?]\n") }
         serverRunning = false
+    }
+
+    /// Non-throwing menu-button wrappers: surface any failure via `phase`.
+    public func tryStartServer() {
+        do { try startServer() } catch { phase = .failed(humanError(error)) }
+    }
+    public func tryStopServer() {
+        do { try stopServer() } catch { phase = .failed(humanError(error)) }
+    }
+
+    /// Reconcile `serverRunning` with launchd's actual state (e.g. at app launch).
+    public func refreshServerRunning() {
+        let loaded = (try? runStatus("/bin/launchctl", ["print", "\(guiDomain)/\(Self.serverLabel)"])) == 0
+        serverRunning = loaded
+    }
+
+    /// Write the LaunchAgent plist that runs the built server against the weights.
+    private func writeLaunchAgent() throws {
+        try FileManager.default.createDirectory(
+            at: launchAgentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Minimal explicit env — launchd does NOT inherit the app's environment.
+        // Keep CONDA_PREFIX unset so flare loads build/libflare_tls.so next to the
+        // binary; HOME is provided by launchd (kv-cache lives under ~/.cache).
+        var env: [String: String] = [
+            "HF_HOME": hfHome.path,
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        ]
+        if FileManager.default.fileExists(atPath: "/etc/ssl/cert.pem") {
+            env["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
+        }
+        let plist: [String: Any] = [
+            "Label": Self.serverLabel,
+            "ProgramArguments": [serverBin.path, Self.model],
+            "WorkingDirectory": backendDir.path,   // hardcoded relative data paths resolve here
+            "EnvironmentVariables": env,
+            "StandardOutPath": logFileURL.path,
+            "StandardErrorPath": logFileURL.path,
+            "RunAtLoad": true,
+            "ProcessType": "Interactive",
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: launchAgentURL)
     }
 
     // ── step 3: start opencode ──────────────────────────────────────────────────
     /// Generate an opencode config from the running server's /v1/models, then open
     /// opencode in a new Terminal window pointed at it. opencode is an interactive
     /// TUI, so it must run in a real terminal, not detached.
-    func startOpencode() {
+    public func startOpencode() {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do { try await self.launchOpencode() }
-            catch { await MainActor.run { self.phase = .failed("opencode: \(humanError(error))") } }
+            catch { await self.set(failed: "opencode: \(humanError(error))") }
         }
     }
 
-    private func launchOpencode() async throws {
+    public func launchOpencode() async throws {
         let base = "http://127.0.0.1:8000/v1"
         let opencode = try findOpencode()
         let configPath = try await writeOpencodeConfig(baseURL: base)
@@ -344,7 +387,7 @@ final class Bootstrapper: ObservableObject {
         guard (resp as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let arr = json["data"] as? [[String: Any]] else {
-            throw BootstrapError.step("opencode", "server not reachable at \(baseURL)/models — start the runner first")
+            throw BootstrapError.step("opencode", "server not reachable at \(baseURL)/models — start the server first")
         }
         let ids = arr.compactMap { $0["id"] as? String }
         guard let first = ids.first else { throw BootstrapError.step("opencode", "no models served") }
@@ -445,11 +488,11 @@ final class Bootstrapper: ObservableObject {
         return env
     }
 
-    /// Env for *running* the compiled Mojo binaries (download / server) — the
-    /// opposite of the build env: keep CONDA_PREFIX unset so flare loads
-    /// `build/libflare_tls.so` next to the binary (cwd) rather than
-    /// `$CONDA_PREFIX/lib`, and point OpenSSL at the system CA bundle (the bundled
-    /// libssl's compiled-in cert path is the CI prefix, which is absent here).
+    /// Env for *running* the compiled Mojo binaries (download) — the opposite of
+    /// the build env: keep CONDA_PREFIX unset so flare loads `build/libflare_tls.so`
+    /// next to the binary (cwd) rather than `$CONDA_PREFIX/lib`, and point OpenSSL
+    /// at the system CA bundle (the bundled libssl's compiled-in cert path is the
+    /// CI prefix, which is absent here).
     private func runtimeEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "CONDA_PREFIX")
@@ -465,8 +508,8 @@ final class Bootstrapper: ObservableObject {
     /// replacement step — which we skip by extracting the `.conda` by hand. Rewrite
     /// it to our real prefix so the compiler can locate the stdlib (`import_path`)
     /// and link the runtime libs (rpath). Idempotent; safe to run every time.
-    private func relocateMojo() throws {
-        let cfg = mojoPrefix.appendingPathComponent("share/max/modular.cfg")
+    private func relocateMojoPrefix(_ prefix: URL) throws {
+        let cfg = prefix.appendingPathComponent("share/max/modular.cfg")
         guard var text = try? String(contentsOf: cfg, encoding: .utf8) else {
             throw BootstrapError.step("relocate", "modular.cfg missing after extract")
         }
@@ -475,10 +518,10 @@ final class Bootstrapper: ObservableObject {
             throw BootstrapError.step("relocate", "no package_root in modular.cfg")
         }
         let placeholder = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
-        guard !placeholder.isEmpty, placeholder != mojoPrefix.path else { return }  // already done
-        text = text.replacingOccurrences(of: placeholder, with: mojoPrefix.path)
+        guard !placeholder.isEmpty, placeholder != prefix.path else { return }  // already done
+        text = text.replacingOccurrences(of: placeholder, with: prefix.path)
         try text.write(to: cfg, atomically: true, encoding: .utf8)
-        appendLog("relocated mojo prefix: \(placeholder) -> \(mojoPrefix.path)\n")
+        appendLog("relocated mojo prefix: \(placeholder) -> \(prefix.path)\n")
     }
 
     private func buildBinary(python: URL, source: String, args: [String], out: String) throws {
@@ -495,67 +538,64 @@ final class Bootstrapper: ObservableObject {
     }
 
     // ── headgate: install ──────────────────────────────────────────────────────
-    /// Download headgate's Mojo toolchain + source bundle and build it. Separate
-    /// from the runner: headgate is on a different nightly and ships its own
-    /// vendored flare/json/minja2 + prebuilt FFI shims.
-    func installHeadgate() {
+    /// Menu-app entry point: fire-and-forget, drives `phase`.
+    public func installHeadgate() {
         guard !isBusy else { return }
         phase = .running("Starting…")
         Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.provisionHeadgate()
+            guard let self else { return }
+            do { try await self.installHeadgateEngine(); await self.set(done: true) }
+            catch { await self.set(failed: humanError(error)) }
         }
     }
 
-    private func provisionHeadgate() async {
-        do {
-            let fm = FileManager.default
-            for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
-                try fm.createDirectory(at: d, withIntermediateDirectories: true)
-            }
-            logHeader("Install headgate")
-
-            // 1. Mojo toolchain (headgate's nightly — distinct from the engine's).
-            if !fm.fileExists(atPath: headgateMojoPrefix.appendingPathComponent("bin/mojo").path) {
-                await set("Downloading Mojo compiler for headgate (~70 MB)…")
-                let compiler = try await download(headgateMojoCompilerURL, name: "headgate-mojo-compiler.conda")
-                await set("Extracting Mojo…")
-                try extractConda(compiler, into: headgateMojoPrefix)
-                let py = try await download(headgateMojoPythonURL, name: "headgate-mojo-python.conda")
-                try extractConda(py, into: headgateMojoPrefix)
-            }
-            try relocateMojoPrefix(headgateMojoPrefix)
-
-            // 2. headgate source bundle (headgate + vendored flare/json/minja2 +
-            //    prebuilt FFI shims), published by headgate CI.
-            await set("Downloading headgate source…")
-            let zip = try await download(headgateZipURL, name: "headgate.zip")
-            await set("Unpacking headgate…")
-            try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", headgateRoot.path])
-            guard fm.fileExists(atPath: headgateDir.appendingPathComponent("src/headgate.mojo").path) else {
-                throw BootstrapError.step("unpack", "headgate zip missing headgate/src/headgate.mojo")
-            }
-
-            // 3. Build headgate against its vendored siblings.
-            await set("Locating Python…")
-            let python = try findPython()
-            await set("Building headgate (first run, ~1 min)…")
-            let mojo = headgateMojoPrefix.appendingPathComponent("bin/mojo").path
-            try run(mojo, ["build", "src/headgate.mojo",
-                           "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
-                           "-o", "build/headgate"],
-                    cwd: headgateDir, env: headgateMojoEnv(python: python))
-
-            // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare
-            //    finds them via $CONDA_PREFIX/lib at runtime — headgate runs WITH
-            //    CONDA_PREFIX set (it shells `mojo build` for the sandboxed
-            //    generated-code compile), unlike the always-serving runner.
-            try installHeadgateShims()
-            ensureConfig(at: headgateConfigURL, Self.headgateConfigDefault)
-
-            await set(done: true)
-        } catch {
-            await MainActor.run { self.phase = .failed(humanError(error)) }
+    /// Download headgate's Mojo toolchain + source bundle and build it. Separate
+    /// from the server: headgate is on a different nightly and ships its own
+    /// vendored flare/json/minja2 + prebuilt FFI shims.
+    public func installHeadgateEngine() async throws {
+        let fm = FileManager.default
+        for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
+            try fm.createDirectory(at: d, withIntermediateDirectories: true)
         }
+        logHeader("Install headgate")
+
+        // 1. Mojo toolchain (headgate's nightly — distinct from the engine's).
+        if !fm.fileExists(atPath: headgateMojoPrefix.appendingPathComponent("bin/mojo").path) {
+            set("Downloading Mojo compiler for headgate (~70 MB)…")
+            let compiler = try await download(headgateMojoCompilerURL, name: "headgate-mojo-compiler.conda")
+            set("Extracting Mojo…")
+            try extractConda(compiler, into: headgateMojoPrefix)
+            let py = try await download(headgateMojoPythonURL, name: "headgate-mojo-python.conda")
+            try extractConda(py, into: headgateMojoPrefix)
+        }
+        try relocateMojoPrefix(headgateMojoPrefix)
+
+        // 2. headgate source bundle (headgate + vendored flare/json/minja2 +
+        //    prebuilt FFI shims), published by headgate CI.
+        set("Downloading headgate source…")
+        let zip = try await download(headgateZipURL, name: "headgate.zip")
+        set("Unpacking headgate…")
+        try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", headgateRoot.path])
+        guard fm.fileExists(atPath: headgateDir.appendingPathComponent("src/headgate.mojo").path) else {
+            throw BootstrapError.step("unpack", "headgate zip missing headgate/src/headgate.mojo")
+        }
+
+        // 3. Build headgate against its vendored siblings.
+        set("Locating Python…")
+        let python = try findPython()
+        set("Building headgate (first run, ~1 min)…")
+        let mojo = headgateMojoPrefix.appendingPathComponent("bin/mojo").path
+        try run(mojo, ["build", "src/headgate.mojo",
+                       "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
+                       "-o", "build/headgate"],
+                cwd: headgateDir, env: headgateMojoEnv(python: python))
+
+        // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare finds
+        //    them via $CONDA_PREFIX/lib at runtime — headgate runs WITH CONDA_PREFIX
+        //    set (it shells `mojo build` for the sandboxed generated-code compile),
+        //    unlike the always-serving server.
+        try installHeadgateShims()
+        ensureConfig(at: headgateConfigURL, Self.headgateConfigDefault)
     }
 
     /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the headgate
@@ -573,23 +613,6 @@ final class Bootstrapper: ObservableObject {
         }
     }
 
-    /// Same prefix-relocation as `relocateMojo`, for an arbitrary Mojo prefix.
-    private func relocateMojoPrefix(_ prefix: URL) throws {
-        let cfg = prefix.appendingPathComponent("share/max/modular.cfg")
-        guard var text = try? String(contentsOf: cfg, encoding: .utf8) else {
-            throw BootstrapError.step("relocate", "modular.cfg missing after extract")
-        }
-        guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix("package_root") }),
-              let eq = line.firstIndex(of: "=") else {
-            throw BootstrapError.step("relocate", "no package_root in modular.cfg")
-        }
-        let placeholder = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
-        guard !placeholder.isEmpty, placeholder != prefix.path else { return }
-        text = text.replacingOccurrences(of: placeholder, with: prefix.path)
-        try text.write(to: cfg, atomically: true, encoding: .utf8)
-        appendLog("relocated mojo prefix: \(placeholder) -> \(prefix.path)\n")
-    }
-
     /// `mojo build` env for the headgate toolchain prefix.
     private func headgateMojoEnv(python: URL) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
@@ -604,15 +627,15 @@ final class Bootstrapper: ObservableObject {
     /// headgate is a one-shot CLI, so "start" opens a Terminal in the install dir
     /// with the toolchain env pre-set — the user sets ANTHROPIC_API_KEY, points it
     /// at their data, and runs `./build/headgate`.
-    func startHeadgate() {
+    public func startHeadgate() {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do { try await self.launchHeadgateTerminal() }
-            catch { await MainActor.run { self.phase = .failed("headgate: \(humanError(error))") } }
+            catch { await self.set(failed: "headgate: \(humanError(error))") }
         }
     }
 
-    private func launchHeadgateTerminal() async throws {
+    public func launchHeadgateTerminal() async throws {
         let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
         let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
         // headgate runs WITH its toolchain on CONDA_PREFIX/PATH (it shells `mojo
@@ -664,18 +687,39 @@ final class Bootstrapper: ObservableObject {
         return out
     }
 
-    private func set(_ msg: String) async { await MainActor.run { self.phase = .running(msg) } }
-    private func set(done: Bool) async { await MainActor.run { self.phase = .done } }
+    /// Like `run`, but returns the exit status instead of throwing on nonzero —
+    /// for probes (launchctl print/bootout) where a nonzero code is expected.
+    @discardableResult
+    private func runStatus(_ launch: String, _ args: [String]) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: launch)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        try p.run()
+        _ = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return p.terminationStatus
+    }
+
+    // ── phase / progress sink ───────────────────────────────────────────────────
+    private func set(_ msg: String) {
+        phase = .running(msg)
+        onProgress?(msg)
+    }
+    private func set(done: Bool) { phase = .done }
+    private func set(failed msg: String) { phase = .failed(msg) }
 }
 
-enum BootstrapError: Error, CustomStringConvertible {
+public enum BootstrapError: Error, CustomStringConvertible {
     case step(String, String)
-    var description: String {
+    public var description: String {
         switch self { case .step(let s, let m): return "\(s): \(m)" }
     }
 }
 
-private func humanError(_ error: Error) -> String {
+func humanError(_ error: Error) -> String {
     if let b = error as? BootstrapError { return b.description }
     return (error as NSError).localizedDescription
 }

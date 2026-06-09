@@ -2,10 +2,10 @@ import Foundation
 
 /// Reachability + version + currently-served model of a local millrace server,
 /// polled over its `/v1/version` endpoint.
-enum ServerStatus: Equatable {
+public enum ServerStatus: Equatable {
     case unknown, online, offline
 
-    var title: String {
+    public var title: String {
         switch self {
         case .unknown: return "Millrace: checking…"
         case .online: return "Millrace: running"
@@ -14,7 +14,7 @@ enum ServerStatus: Equatable {
     }
 
     /// SF Symbol for the menu-bar icon (water-drop theme).
-    var symbol: String {
+    public var symbol: String {
         switch self {
         case .unknown: return "drop"
         case .online: return "drop.fill"
@@ -24,30 +24,30 @@ enum ServerStatus: Equatable {
 }
 
 @MainActor
-final class MillraceClient: ObservableObject {
+public final class MillraceClient: ObservableObject {
     /// Default millrace server address (see mojo-backend: `pixi run serve`).
-    let baseURL = "http://127.0.0.1:8000"
+    public let baseURL = "http://127.0.0.1:8000"
 
-    @Published var status: ServerStatus = .unknown
-    @Published var version: String? = nil
-    @Published var model: String? = nil
+    @Published public var status: ServerStatus = .unknown
+    @Published public var version: String? = nil
+    @Published public var model: String? = nil
 
     private var timer: Timer?
 
-    init() {
+    public init() {
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { await self?.poll() }
         }
     }
 
-    func refresh() {
+    public func refresh() {
         Task { await poll() }
     }
 
     /// GET /v1/version → {"engine":"millrace","version":"…","model":"…"}.
     /// Drives the "is the engine installed/running?" state and shows its version.
-    func poll() async {
+    public func poll() async {
         guard let url = URL(string: baseURL + "/v1/version") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 3

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MillraceCore
 
 /// Millrace — a macOS menu-bar companion for the local millrace inference server.
 /// Lives in the menu bar (no Dock icon when bundled with LSUIElement); drives the
@@ -45,7 +46,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Refresh") { client.refresh() }
+        Button("Refresh") { client.refresh(); bootstrapper.refreshServerRunning() }
         if client.status == .online {
             Button("Open server in browser") {
                 if let url = URL(string: client.baseURL) { NSWorkspace.shared.open(url) }
@@ -74,18 +75,18 @@ struct MenuContent: View {
                 Button("Open Log") { bootstrapper.openLog() }
             }
 
-            // 1. Download runner (+ weights). Hidden once both are present.
-            if !(bootstrapper.isRunnerInstalled && bootstrapper.weightsPresent) {
-                Button(downloadLabel) { bootstrapper.downloadRunner() }
+            // 1. Install server (+ weights). Hidden once both are present.
+            if !(bootstrapper.isServerInstalled && bootstrapper.weightsPresent) {
+                Button(downloadLabel) { bootstrapper.downloadServer() }
             }
 
-            // 2. Start / Stop runner.
+            // 2. Start / Stop server.
             if bootstrapper.serverRunning || client.status == .online {
-                Button("Stop runner") { bootstrapper.stopRunner() }
+                Button("Stop server") { bootstrapper.tryStopServer() }
                     .disabled(!bootstrapper.serverRunning)
             } else {
-                Button("Start runner") { bootstrapper.startRunner() }
-                    .disabled(!bootstrapper.canStartRunner)
+                Button("Start server") { bootstrapper.tryStartServer() }
+                    .disabled(!bootstrapper.canStartServer)
             }
 
             // 3. Start opencode (needs a running server).
@@ -114,7 +115,7 @@ struct MenuContent: View {
     }
 
     private var downloadLabel: String {
-        if case .failed = bootstrapper.phase { return "Retry download runner…" }
-        return bootstrapper.isRunnerInstalled ? "Download model weights…" : "Download runner…"
+        if case .failed = bootstrapper.phase { return "Retry install server…" }
+        return bootstrapper.isServerInstalled ? "Download model weights…" : "Install server…"
     }
 }
