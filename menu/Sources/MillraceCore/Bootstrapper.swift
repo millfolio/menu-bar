@@ -250,6 +250,7 @@ public final class Bootstrapper: ObservableObject {
         set("Building engine (first run, ~1 min)…")
         try buildBinary(python: python, source: "src/server.mojo",
                         args: ["-I", "../minja2/src", "-I", "../flare"], out: "build/server")
+        signServerIdentity()
 
         if !weightsPresent {
             set("Building downloader…")
@@ -528,6 +529,20 @@ public final class Bootstrapper: ObservableObject {
         let mojo = mojoPrefix.appendingPathComponent("bin/mojo").path
         // flare's libflare_tls.so ships at mojo-backend/build/ relative to cwd.
         try run(mojo, ["build", source] + args + ["-o", out], cwd: backendDir, env: mojoEnv(python: python))
+    }
+
+    /// `mojo build` ad-hoc "linker-signs" the server with the identifier "server".
+    /// macOS's "<name> can run in the background" notification + Login Items entry
+    /// for the LaunchAgent take that signing identifier as the name, so re-sign it
+    /// (still ad-hoc) as "millrace". Best-effort — purely cosmetic, so a failure
+    /// never blocks the install.
+    private func signServerIdentity() {
+        do {
+            try run("/usr/bin/codesign",
+                    ["--force", "--sign", "-", "--identifier", "millrace", serverBin.path])
+        } catch {
+            appendLog("could not re-sign server identity (cosmetic): \(humanError(error))\n")
+        }
     }
 
     private func downloadWeights() throws {
