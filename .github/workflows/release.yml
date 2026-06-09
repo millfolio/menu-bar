@@ -29,7 +29,7 @@ jobs:
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Import the Developer ID *Application* (signs the app, hardened runtime) and
       # *Installer* (signs the .pkg) certs into one throwaway keychain, exposing
@@ -133,14 +133,14 @@ jobs:
         run: security delete-keychain "${MILLRACE_KEYCHAIN:-$RUNNER_TEMP/millrace.keychain-db}" || true
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Millrace-pkg
           path: Millrace.pkg
           if-no-files-found: error
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: millrace-cli
           path: millrace-macos.tar.gz
@@ -150,7 +150,7 @@ jobs:
       # tarball attached.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             Millrace.pkg
