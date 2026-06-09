@@ -605,6 +605,12 @@ public final class Bootstrapper: ObservableObject {
                        "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
                        "-o", "build/headgate"],
                 cwd: headgateDir, env: headgateMojoEnv(python: python))
+        // The HTTP server for the web UI (serves web/dist + POST /chat on :10000).
+        set("Building headgate web server…")
+        try run(mojo, ["build", "src/server.mojo",
+                       "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
+                       "-o", "build/headgate-server"],
+                cwd: headgateDir, env: headgateMojoEnv(python: python))
 
         // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare finds
         //    them via $CONDA_PREFIX/lib at runtime — headgate runs WITH CONDA_PREFIX
@@ -681,6 +687,53 @@ public final class Bootstrapper: ObservableObject {
 
     public func launchHeadgateTerminal() async throws {
         let script = try writeHeadgateScript()
+        let cmd = "'\(script.path)'"
+        try run("/usr/bin/osascript",
+                ["-e", "tell application \"Terminal\" to activate",
+                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
+    }
+
+    // ── headgate: web (server on :10000 + open the browser) ─────────────────────
+    /// Write the `run-headgate-web.sh` launcher: set the toolchain env, start the
+    /// HTTP server (which serves the built web UI + the /chat API on :10000), and
+    /// open the browser at it. Shared by the menu app (new Terminal) and the CLI
+    /// (execs it in the current terminal). Returns its path.
+    @discardableResult
+    public func writeHeadgateWebScript() throws -> URL {
+        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
+        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
+        let script = support.appendingPathComponent("run-headgate-web.sh")
+        let body = """
+        #!/bin/bash
+        cd '\(headgateDir.path)'
+        if [ ! -x ./build/headgate-server ]; then
+          echo 'headgate web server not built — run: millrace headgate install' >&2
+          exit 1
+        fi
+        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
+        export MODULAR_HOME='\(modularHome)'
+        export PATH='\(mojoBin)':"$PATH"
+        # flare's bundled OpenSSL has a CI-baked CA path; use the system bundle.
+        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
+        ( sleep 1.5 && open 'http://localhost:10000' ) &
+        exec ./build/headgate-server
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    /// Menu-app entry point: open the headgate web app in a new Terminal.
+    public func startHeadgateWeb() {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.launchHeadgateWebTerminal() }
+            catch { await self.set(failed: "headgate web: \(humanError(error))") }
+        }
+    }
+
+    public func launchHeadgateWebTerminal() async throws {
+        let script = try writeHeadgateWebScript()
         let cmd = "'\(script.path)'"
         try run("/usr/bin/osascript",
                 ["-e", "tell application \"Terminal\" to activate",

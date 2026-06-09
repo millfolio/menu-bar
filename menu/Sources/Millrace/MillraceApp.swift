@@ -104,7 +104,8 @@ struct MenuContent: View {
     @ViewBuilder
     private var headgateActions: some View {
         if bootstrapper.isHeadgateInstalled {
-            Button("Start headgate…") { bootstrapper.startHeadgate() }
+            Button("Open headgate web…") { bootstrapper.startHeadgateWeb() }
+            Button("Start headgate (CLI)…") { bootstrapper.startHeadgate() }
         } else {
             Button("Install headgate…") { bootstrapper.installHeadgate() }
                 .disabled(bootstrapper.isBusy)

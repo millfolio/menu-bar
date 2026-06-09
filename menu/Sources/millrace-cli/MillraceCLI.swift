@@ -94,7 +94,7 @@ struct Headgate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "headgate",
         abstract: "Install and launch the headgate privacy harness.",
-        subcommands: [Install.self, Start.self, Status.self]
+        subcommands: [Install.self, Start.self, Web.self, Status.self]
     )
 
     struct Install: AsyncParsableCommand {
@@ -141,6 +141,29 @@ struct Headgate: AsyncParsableCommand {
                                           "exec /bin/bash failed: \(String(cString: strerror(errno)))")
             } else {
                 try await boot.launchHeadgateTerminal()
+            }
+        }
+    }
+
+    struct Web: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Open the headgate web app (chat UI) at http://localhost:10000.",
+            discussion: """
+            Starts the headgate HTTP server (which serves the web UI + the /chat \
+            API on one origin) and opens it in your browser. Runs in the current \
+            terminal — Ctrl-C stops the server.
+            """)
+        @MainActor func run() async throws {
+            let boot = Bootstrapper()
+            let script = try boot.writeHeadgateWebScript()
+            if isatty(FileHandle.standardInput.fileDescriptor) != 0 {
+                let argv: [UnsafeMutablePointer<CChar>?] =
+                    [strdup("/bin/bash"), strdup(script.path), nil]
+                execv("/bin/bash", argv)
+                throw BootstrapError.step("headgate web",
+                                          "exec /bin/bash failed: \(String(cString: strerror(errno)))")
+            } else {
+                try await boot.launchHeadgateWebTerminal()
             }
         }
     }
