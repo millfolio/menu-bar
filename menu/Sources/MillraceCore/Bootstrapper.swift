@@ -669,6 +669,9 @@ public final class Bootstrapper: ObservableObject {
         export CONDA_PREFIX='\(headgateMojoPrefix.path)'
         export MODULAR_HOME='\(modularHome)'
         export PATH='\(mojoBin)':"$PATH"
+        # flare's bundled OpenSSL has a CI-baked CA path; point it at the system
+        # bundle so HTTPS to the Anthropic API verifies (else CertificateUntrusted).
+        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
         exec ./build/headgate "$@"
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
