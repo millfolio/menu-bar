@@ -84,6 +84,49 @@ final class Bootstrapper: ObservableObject {
     /// The built headgate binary is present.
     var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
 
+    // ── default config files (~/.config) ───────────────────────────────────────
+    // Seeded with sensible defaults on install if absent, so a fresh setup has an
+    // editable starting point. The engines read these (millrace = mojo-backend,
+    // headgate = headgate); we NEVER overwrite an existing file.
+    private var dotConfig: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
+    }
+    private var millraceConfigURL: URL { dotConfig.appendingPathComponent("millrace/config.json") }
+    private var headgateConfigURL: URL { dotConfig.appendingPathComponent("headgate/config.json") }
+
+    private static let millraceConfigDefault = """
+    {
+      "port": 8000,
+      "model": "Qwen/Qwen2.5-3B-Instruct",
+      "q4": false,
+      "kv_budget_mb": 8192
+    }
+    """
+    private static let headgateConfigDefault = """
+    {
+      "local_url": "http://127.0.0.1:8000/v1",
+      "local_model": "Qwen2.5-0.5B-Instruct",
+      "remote_base_url": "https://api.anthropic.com/v1",
+      "remote_model": "claude-sonnet-4-6",
+      "remote_token_budget": 200000,
+      "mock": false,
+      "use_local_summary": false
+    }
+    """
+
+    /// Create `path` with `json` if it doesn't exist (best-effort; never overwrites).
+    private func ensureConfig(at path: URL, _ json: String) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: path.path) else { return }
+        do {
+            try fm.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try json.write(to: path, atomically: true, encoding: .utf8)
+            appendLog("wrote default config: \(path.path)\n")
+        } catch {
+            appendLog("could not write config \(path.path): \(error)\n")  // non-fatal
+        }
+    }
+
     // ── install locations ─────────────────────────────────────────────────────
     private var support: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -199,6 +242,7 @@ final class Bootstrapper: ObservableObject {
                 try downloadWeights()
             }
 
+            ensureConfig(at: millraceConfigURL, Self.millraceConfigDefault)
             await set(done: true)
         } catch {
             await MainActor.run { self.phase = .failed(humanError(error)) }
@@ -506,6 +550,7 @@ final class Bootstrapper: ObservableObject {
             //    CONDA_PREFIX set (it shells `mojo build` for the sandboxed
             //    generated-code compile), unlike the always-serving runner.
             try installHeadgateShims()
+            ensureConfig(at: headgateConfigURL, Self.headgateConfigDefault)
 
             await set(done: true)
         } catch {
