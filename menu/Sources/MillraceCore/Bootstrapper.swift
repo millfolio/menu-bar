@@ -6,7 +6,7 @@ import AppKit
 ///   1. **Install server** — fetch the official Mojo compiler+runtime from
 ///      Modular's conda channel (so the *user* accepts Modular's license — we
 ///      never redistribute it), unpack our engine source zip (mojo-backend +
-///      minja2 + flare + a prebuilt libflare_tls.so), build the server with
+///      jinja2.mojo + flare + a prebuilt libflare_tls.so), build the server with
 ///      `mojo build`, then download the default model's weights with the engine's
 ///      own native-Mojo downloader (no huggingface_hub).
 ///   2. **Start server** — launch the built server (via a launchd LaunchAgent, so
@@ -70,7 +70,7 @@ public final class Bootstrapper: ObservableObject {
     private var mojoPythonURL: URL {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
-    /// The engine ("server") source bundle (mojo-backend + vendored minja2/flare +
+    /// The engine ("server") source bundle (mojo-backend + vendored jinja2.mojo/flare +
     /// prebuilt libflare_tls.so), published by mojo-backend CI. The asset is still
     /// named `runner.zip` (wire name retained for now).
     private let serverZipURL =
@@ -92,7 +92,7 @@ public final class Bootstrapper: ObservableObject {
     }
     private var headgateMojoPrefix: URL { support.appendingPathComponent("headgate-mojo", isDirectory: true) }
     private var headgateRoot: URL { support.appendingPathComponent("headgate-engine", isDirectory: true) }
-    /// headgate checkout inside the unpacked bundle (sibling of flare/json/minja2).
+    /// headgate checkout inside the unpacked bundle (sibling of flare/json/jinja2.mojo).
     private var headgateDir: URL { headgateRoot.appendingPathComponent("headgate", isDirectory: true) }
     private var headgateBin: URL { headgateDir.appendingPathComponent("build/headgate") }
     /// The built headgate binary is present.
@@ -250,7 +250,7 @@ public final class Bootstrapper: ObservableObject {
 
         set("Building engine (first run, ~1 min)…")
         try buildBinary(python: python, source: "src/server.mojo",
-                        args: ["-I", "../minja2/src", "-I", "../flare"], out: "build/server")
+                        args: ["-I", "../jinja2.mojo/src", "-I", "../flare"], out: "build/server")
         signServerIdentity()
 
         if !weightsPresent {
@@ -567,7 +567,7 @@ public final class Bootstrapper: ObservableObject {
 
     /// Download headgate's Mojo toolchain + source bundle and build it. Separate
     /// from the server: headgate is on a different nightly and ships its own
-    /// vendored flare/json/minja2 + prebuilt FFI shims.
+    /// vendored flare/json/jinja2.mojo + prebuilt FFI shims.
     public func installHeadgateEngine() async throws {
         let fm = FileManager.default
         for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
@@ -586,7 +586,7 @@ public final class Bootstrapper: ObservableObject {
         }
         try relocateMojoPrefix(headgateMojoPrefix)
 
-        // 2. headgate source bundle (headgate + vendored flare/json/minja2 +
+        // 2. headgate source bundle (headgate + vendored flare/json/jinja2.mojo +
         //    prebuilt FFI shims), published by headgate CI.
         set("Downloading headgate source…")
         let zip = try await download(headgateZipURL, name: "headgate.zip")
@@ -602,13 +602,13 @@ public final class Bootstrapper: ObservableObject {
         set("Building headgate (first run, ~1 min)…")
         let mojo = headgateMojoPrefix.appendingPathComponent("bin/mojo").path
         try run(mojo, ["build", "src/headgate.mojo",
-                       "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
+                       "-I", "../flare", "-I", "../json", "-I", "../jinja2.mojo/src",
                        "-o", "build/headgate"],
                 cwd: headgateDir, env: headgateMojoEnv(python: python))
         // The HTTP server for the web UI (serves web/dist + POST /chat on :10000).
         set("Building headgate web server…")
         try run(mojo, ["build", "src/server.mojo",
-                       "-I", "../flare", "-I", "../json", "-I", "../minja2/src",
+                       "-I", "../flare", "-I", "../json", "-I", "../jinja2.mojo/src",
                        "-o", "build/headgate-server"],
                 cwd: headgateDir, env: headgateMojoEnv(python: python))
 
