@@ -105,6 +105,7 @@ struct MenuContent: View {
     private var headgateActions: some View {
         if bootstrapper.isHeadgateInstalled {
             Button("Open headgate web…") { bootstrapper.startHeadgateWeb() }
+            Button("Stop headgate web") { bootstrapper.stopHeadgateWeb() }
             Button("Start headgate (CLI)…") { bootstrapper.startHeadgate() }
         } else {
             Button("Install headgate…") { bootstrapper.installHeadgate() }

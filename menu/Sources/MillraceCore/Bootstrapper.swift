@@ -737,6 +737,19 @@ public final class Bootstrapper: ObservableObject {
                  "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
+    /// Stop the headgate web server (started by `headgate web`). It runs as a
+    /// foreground process (not a launchd agent), so terminate it by name —
+    /// killing the server makes serve-web.sh's own `wait` return and its cleanup
+    /// trap tear down any `tailscale serve` mapping. Returns true if one was
+    /// running. Best-effort; never throws.
+    @discardableResult
+    public func stopHeadgateWeb() -> Bool {
+        // pkill exits 0 if it signaled at least one process, 1 if none matched.
+        let hit = (try? runStatus("/usr/bin/pkill", ["-f", "build/headgate-server"])) == 0
+        _ = try? runStatus("/usr/bin/pkill", ["-f", "scripts/serve-web.sh"])
+        return hit
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
     @discardableResult
     private func run(_ launch: String, _ args: [String], cwd: URL? = nil, env: [String: String]? = nil) throws -> String {

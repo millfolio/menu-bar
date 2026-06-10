@@ -13,8 +13,24 @@ struct Millrace: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "millrace",
         abstract: "Manage the local millrace inference server and the headgate privacy harness.",
-        subcommands: [Server.self, Headgate.self, Opencode.self]
+        subcommands: [Server.self, Headgate.self, Opencode.self, Stop.self]
     )
+}
+
+// ── millrace stop ────────────────────────────────────────────────────────────
+struct Stop: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "stop",
+        abstract: "Stop both the inference server and the headgate web server.")
+    @MainActor func run() async throws {
+        let boot = Bootstrapper()
+        boot.refreshServerRunning()
+        let wasRunning = boot.serverRunning
+        try boot.stopServer()
+        print(wasRunning ? "✓ inference server stopped" : "• inference server was not running")
+        print(boot.stopHeadgateWeb()
+              ? "✓ headgate web server stopped" : "• headgate web server was not running")
+    }
 }
 
 // ── millrace server … ────────────────────────────────────────────────────────
@@ -94,7 +110,7 @@ struct Headgate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "headgate",
         abstract: "Install and launch the headgate privacy harness.",
-        subcommands: [Install.self, Start.self, Web.self, Status.self]
+        subcommands: [Install.self, Start.self, Web.self, Stop.self, Status.self]
     )
 
     struct Install: AsyncParsableCommand {
@@ -165,6 +181,15 @@ struct Headgate: AsyncParsableCommand {
             } else {
                 try await boot.launchHeadgateWebTerminal()
             }
+        }
+    }
+
+    struct Stop: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Stop the headgate web server (started by `headgate web`).")
+        @MainActor func run() async throws {
+            print(Bootstrapper().stopHeadgateWeb()
+                  ? "✓ headgate web server stopped" : "• no headgate web server running")
         }
     }
 
