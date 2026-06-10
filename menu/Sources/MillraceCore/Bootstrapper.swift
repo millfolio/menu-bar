@@ -706,17 +706,14 @@ public final class Bootstrapper: ObservableObject {
         let body = """
         #!/bin/bash
         cd '\(headgateDir.path)'
-        if [ ! -x ./build/headgate-server ]; then
-          echo 'headgate web server not built — run: millrace headgate install' >&2
-          exit 1
-        fi
         export CONDA_PREFIX='\(headgateMojoPrefix.path)'
         export MODULAR_HOME='\(modularHome)'
         export PATH='\(mojoBin)':"$PATH"
         # flare's bundled OpenSSL has a CI-baked CA path; use the system bundle.
         [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
-        ( sleep 1.5 && open 'http://localhost:10000' ) &
-        exec ./build/headgate-server
+        # serve-web.sh: bind 127.0.0.1:10000, open the UI, and expose it on the
+        # tailnet via `tailscale serve` when Tailscale is available (else localhost).
+        exec bash scripts/serve-web.sh
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
