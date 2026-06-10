@@ -25,7 +25,7 @@ struct MenuContent: View {
     @ObservedObject var client: MillraceClient
     @ObservedObject var bootstrapper: Bootstrapper
 
-    private let engineRepoURL = "https://github.com/millrace/mojo-backend"
+    private let engineRepoURL = "https://github.com/millrace/inference-server"
     private let headgateRepoURL = "https://github.com/millrace/headgate"
 
     var body: some View {

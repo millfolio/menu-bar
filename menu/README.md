@@ -1,7 +1,7 @@
 # menu
 
 The Millrace macOS menu-bar app — a SwiftUI [`MenuBarExtra`](https://developer.apple.com/documentation/swiftui/menubarextra)
-that watches a local [millrace](https://github.com/millrace/mojo-backend) server
+that watches a local [millrace](https://github.com/millrace/inference-server) server
 and shows whether it's up and which model it's serving.
 
 ## Run (development)

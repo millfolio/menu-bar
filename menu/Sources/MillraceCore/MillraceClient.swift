@@ -25,7 +25,7 @@ public enum ServerStatus: Equatable {
 
 @MainActor
 public final class MillraceClient: ObservableObject {
-    /// Default millrace server address (see mojo-backend: `pixi run serve`).
+    /// Default millrace server address (see inference-server: `pixi run serve`).
     public let baseURL = "http://127.0.0.1:8000"
 
     @Published public var status: ServerStatus = .unknown

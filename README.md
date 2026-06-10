@@ -3,7 +3,7 @@
 > Part of [**millrace**](https://millrace.me) — local-first LLM inference on Apple Silicon.
 
 The desktop companions for the
-[millrace inference server](https://github.com/millrace/mojo-backend) (the
+[millrace inference server](https://github.com/millrace/inference-server) (the
 pure-Mojo local LLM engine): a macOS **menu-bar app** and a **`millrace` CLI**.
 Either one bootstraps the whole stack — fetch the Mojo toolchain, build the
 engine, download model weights, serve, and launch opencode — and they also

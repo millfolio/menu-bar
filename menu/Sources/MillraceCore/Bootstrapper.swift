@@ -5,7 +5,7 @@ import AppKit
 ///
 ///   1. **Install server** — fetch the official Mojo compiler+runtime from
 ///      Modular's conda channel (so the *user* accepts Modular's license — we
-///      never redistribute it), unpack our engine source zip (mojo-backend +
+///      never redistribute it), unpack our engine source zip (inference-server +
 ///      jinja2.mojo + flare + a prebuilt libflare_tls.so), build the server with
 ///      `mojo build`, then download the default model's weights with the engine's
 ///      own native-Mojo downloader (no huggingface_hub).
@@ -23,7 +23,7 @@ import AppKit
 /// NOTE: the Mojo fetch is "rattler-by-URL" — we don't link the rattler crate, we
 /// GET the pinned `.conda` packages (a .conda is a zip of zstd tarballs) and
 /// extract them with the system `unzip`/`tar`. Keep `mojoVersion` in sync with
-/// mojo-backend/pixi.lock.
+/// inference-server/pixi.lock.
 @MainActor
 public final class Bootstrapper: ObservableObject {
     public enum Phase: Equatable {
@@ -56,7 +56,7 @@ public final class Bootstrapper: ObservableObject {
 
     public var isBusy: Bool { if case .running = phase { return true }; return false }
 
-    // ── pinned manifest (keep in sync with mojo-backend/pixi.lock) ─────────────
+    // ── pinned manifest (keep in sync with inference-server/pixi.lock) ─────────────
     public static let mojoVersion = "1.0.0b2.dev2026053106"
     public static let condaChannel = "https://conda.modular.com/max-nightly"
     /// Default model served by the server. The 3B is int4-friendly and the
@@ -70,11 +70,11 @@ public final class Bootstrapper: ObservableObject {
     private var mojoPythonURL: URL {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
-    /// The engine ("server") source bundle (mojo-backend + vendored jinja2.mojo/flare +
-    /// prebuilt libflare_tls.so), published by mojo-backend CI. The asset is still
+    /// The engine ("server") source bundle (inference-server + vendored jinja2.mojo/flare +
+    /// prebuilt libflare_tls.so), published by inference-server CI. The asset is still
     /// named `runner.zip` (wire name retained for now).
     private let serverZipURL =
-        URL(string: "https://github.com/millrace/mojo-backend/releases/latest/download/runner.zip")!
+        URL(string: "https://github.com/millrace/inference-server/releases/latest/download/runner.zip")!
 
     // ── headgate (privacy harness) ─────────────────────────────────────────────
     // headgate is a separate engine on a DIFFERENT Mojo nightly than the server
@@ -100,7 +100,7 @@ public final class Bootstrapper: ObservableObject {
 
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
-    // editable starting point. The engines read these (millrace = mojo-backend,
+    // editable starting point. The engines read these (millrace = inference-server,
     // headgate = headgate); we NEVER overwrite an existing file.
     private var dotConfig: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
@@ -152,8 +152,8 @@ public final class Bootstrapper: ObservableObject {
     private var cacheDir: URL { support.appendingPathComponent("cache", isDirectory: true) }
     /// HF cache root for the model weights (HF_HOME). Self-contained under support/.
     private var hfHome: URL { support.appendingPathComponent("hf", isDirectory: true) }
-    /// mojo-backend checkout inside the unpacked engine zip.
-    private var backendDir: URL { engineRoot.appendingPathComponent("mojo-backend", isDirectory: true) }
+    /// inference-server checkout inside the unpacked engine zip.
+    private var backendDir: URL { engineRoot.appendingPathComponent("inference-server", isDirectory: true) }
     private var serverBin: URL { backendDir.appendingPathComponent("build/server") }
     /// All subprocess output (mojo build, weights download, the running server)
     /// is appended here so errors that flash by in the menu can be read in full.
@@ -378,7 +378,7 @@ public final class Bootstrapper: ObservableObject {
                  "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
-    /// Build the opencode provider config the way mojo-backend/opencode_config.py
+    /// Build the opencode provider config the way inference-server/opencode_config.py
     /// does, but in-process (no Python): query /v1/models and declare each served id.
     private func writeOpencodeConfig(baseURL: String) async throws -> String {
         guard let url = URL(string: baseURL + "/models") else {
@@ -448,7 +448,7 @@ public final class Bootstrapper: ObservableObject {
     private func unpackZip(_ zip: URL, into dir: URL) throws {
         try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", dir.path])
         guard FileManager.default.fileExists(atPath: backendDir.appendingPathComponent("src/server.mojo").path) else {
-            throw BootstrapError.step("unpack", "engine zip missing mojo-backend/src/server.mojo")
+            throw BootstrapError.step("unpack", "engine zip missing inference-server/src/server.mojo")
         }
     }
 
@@ -528,7 +528,7 @@ public final class Bootstrapper: ObservableObject {
 
     private func buildBinary(python: URL, source: String, args: [String], out: String) throws {
         let mojo = mojoPrefix.appendingPathComponent("bin/mojo").path
-        // flare's libflare_tls.so ships at mojo-backend/build/ relative to cwd.
+        // flare's libflare_tls.so ships at inference-server/build/ relative to cwd.
         try run(mojo, ["build", source] + args + ["-o", out], cwd: backendDir, env: mojoEnv(python: python))
     }
 
