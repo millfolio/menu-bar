@@ -98,6 +98,26 @@ public final class Bootstrapper: ObservableObject {
     /// The built headgate binary is present.
     public var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
 
+    // ── dacular (personal data vault) ───────────────────────────────────────────
+    // dacular is a one-shot vault CLI built on the SAME Mojo nightly as headgate.
+    // It has no FFI shims or sibling-repo deps yet, so the bundle is just source
+    // and the on-device build is a bare `mojo build src/dacular.mojo`.
+    private let dacularZipURL =
+        URL(string: "https://github.com/millrace/dacular/releases/latest/download/dacular.zip")!
+    private var dacularMojoCompilerURL: URL {
+        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.headgateMojoVersion)-release.conda")!
+    }
+    private var dacularMojoPythonURL: URL {
+        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.headgateMojoVersion)-release.conda")!
+    }
+    private var dacularMojoPrefix: URL { support.appendingPathComponent("dacular-mojo", isDirectory: true) }
+    private var dacularRoot: URL { support.appendingPathComponent("dacular-engine", isDirectory: true) }
+    /// dacular checkout inside the unpacked bundle.
+    private var dacularDir: URL { dacularRoot.appendingPathComponent("dacular", isDirectory: true) }
+    private var dacularBin: URL { dacularDir.appendingPathComponent("build/dacular") }
+    /// The built dacular binary is present.
+    public var isDacularInstalled: Bool { FileManager.default.isExecutableFile(atPath: dacularBin.path) }
+
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
     // editable starting point. The engines read these (millrace = inference-server,
@@ -748,6 +768,109 @@ public final class Bootstrapper: ObservableObject {
         let hit = (try? runStatus("/usr/bin/pkill", ["-f", "build/headgate-server"])) == 0
         _ = try? runStatus("/usr/bin/pkill", ["-f", "scripts/serve-web.sh"])
         return hit
+    }
+
+    // ── dacular: install ────────────────────────────────────────────────────────
+    /// Menu-app entry point: fire-and-forget, drives `phase`.
+    public func installDacular() {
+        guard !isBusy else { return }
+        phase = .running("Starting…")
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.installDacularEngine(); await self.set(done: true) }
+            catch { await self.set(failed: humanError(error)) }
+        }
+    }
+
+    /// Download dacular's Mojo toolchain + source bundle and build it. Same nightly
+    /// as headgate, but dacular has no FFI shims or sibling deps, so the build is a
+    /// bare `mojo build src/dacular.mojo`.
+    public func installDacularEngine() async throws {
+        let fm = FileManager.default
+        for d in [support, dacularMojoPrefix, dacularRoot, cacheDir] {
+            try fm.createDirectory(at: d, withIntermediateDirectories: true)
+        }
+        logHeader("Install dacular")
+
+        // 1. Mojo toolchain (same nightly as headgate).
+        if !fm.fileExists(atPath: dacularMojoPrefix.appendingPathComponent("bin/mojo").path) {
+            set("Downloading Mojo compiler for dacular (~70 MB)…")
+            let compiler = try await download(dacularMojoCompilerURL, name: "dacular-mojo-compiler.conda")
+            set("Extracting Mojo…")
+            try extractConda(compiler, into: dacularMojoPrefix)
+            let py = try await download(dacularMojoPythonURL, name: "dacular-mojo-python.conda")
+            try extractConda(py, into: dacularMojoPrefix)
+        }
+        try relocateMojoPrefix(dacularMojoPrefix)
+
+        // 2. dacular source bundle (just source — no FFI/sibling deps yet).
+        set("Downloading dacular source…")
+        let zip = try await download(dacularZipURL, name: "dacular.zip")
+        set("Unpacking dacular…")
+        try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", dacularRoot.path])
+        guard fm.fileExists(atPath: dacularDir.appendingPathComponent("src/dacular.mojo").path) else {
+            throw BootstrapError.step("unpack", "dacular zip missing dacular/src/dacular.mojo")
+        }
+
+        // 3. Build dacular.
+        set("Locating Python…")
+        let python = try findPython()
+        set("Building dacular (first run, ~1 min)…")
+        let mojo = dacularMojoPrefix.appendingPathComponent("bin/mojo").path
+        try run(mojo, ["build", "src/dacular.mojo", "-o", "build/dacular"],
+                cwd: dacularDir, env: dacularMojoEnv(python: python))
+    }
+
+    /// `mojo build` env for the dacular toolchain prefix.
+    private func dacularMojoEnv(python: URL) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extraPath = "\(python.deletingLastPathComponent().path):\(dacularMojoPrefix.appendingPathComponent("bin").path)"
+        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        env["CONDA_PREFIX"] = dacularMojoPrefix.path
+        env["MODULAR_HOME"] = dacularMojoPrefix.appendingPathComponent("share/max").path
+        return env
+    }
+
+    // ── dacular: start (open a ready-to-use Terminal) ───────────────────────────
+    /// dacular is a one-shot vault CLI, so "start" opens a Terminal in the install
+    /// dir with the toolchain env pre-set — the user runs e.g.
+    /// `./build/dacular manifest ~/dacular`.
+    public func startDacular() {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.launchDacularTerminal() }
+            catch { await self.set(failed: "dacular: \(humanError(error))") }
+        }
+    }
+
+    /// Write the `run-dacular.sh` launcher — sets the toolchain env, cd's to the
+    /// install dir, and execs the dacular binary forwarding any args (`"$@"`).
+    /// Shared by the menu app (new Terminal) and the CLI (execs in the current
+    /// terminal). Returns its path.
+    @discardableResult
+    public func writeDacularScript() throws -> URL {
+        let mojoBin = dacularMojoPrefix.appendingPathComponent("bin").path
+        let modularHome = dacularMojoPrefix.appendingPathComponent("share/max").path
+        let script = support.appendingPathComponent("run-dacular.sh")
+        let body = """
+        #!/bin/bash
+        cd '\(dacularDir.path)'
+        export CONDA_PREFIX='\(dacularMojoPrefix.path)'
+        export MODULAR_HOME='\(modularHome)'
+        export PATH='\(mojoBin)':"$PATH"
+        exec ./build/dacular "$@"
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    public func launchDacularTerminal() async throws {
+        let script = try writeDacularScript()
+        let cmd = "'\(script.path)'"
+        try run("/usr/bin/osascript",
+                ["-e", "tell application \"Terminal\" to activate",
+                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

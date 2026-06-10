@@ -27,6 +27,7 @@ struct MenuContent: View {
 
     private let engineRepoURL = "https://github.com/millrace/inference-server"
     private let headgateRepoURL = "https://github.com/millrace/headgate"
+    private let dacularRepoURL = "https://github.com/millrace/dacular"
 
     var body: some View {
         Text(client.status.title)
@@ -43,6 +44,10 @@ struct MenuContent: View {
         Divider()
 
         headgateActions
+
+        Divider()
+
+        dacularActions
 
         Divider()
 
@@ -113,6 +118,21 @@ struct MenuContent: View {
         }
         Button("View headgate on GitHub") {
             if let url = URL(string: headgateRepoURL) { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    /// dacular (personal data vault, experimental): install (download toolchain +
+    /// bundle, build) and start (open a ready-to-use Terminal — a one-shot CLI).
+    @ViewBuilder
+    private var dacularActions: some View {
+        if bootstrapper.isDacularInstalled {
+            Button("Start dacular (CLI)…") { bootstrapper.startDacular() }
+        } else {
+            Button("Install dacular…") { bootstrapper.installDacular() }
+                .disabled(bootstrapper.isBusy)
+        }
+        Button("View dacular on GitHub") {
+            if let url = URL(string: dacularRepoURL) { NSWorkspace.shared.open(url) }
         }
     }
 

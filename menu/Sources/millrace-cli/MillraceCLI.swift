@@ -12,8 +12,8 @@ import MillraceCore
 struct Millrace: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "millrace",
-        abstract: "Manage the local millrace inference server and the headgate privacy harness.",
-        subcommands: [Server.self, Headgate.self, Opencode.self, Stop.self]
+        abstract: "Manage the local millrace inference server, the headgate privacy harness, and the dacular vault.",
+        subcommands: [Server.self, Headgate.self, Dacular.self, Opencode.self, Stop.self]
     )
 }
 
@@ -197,6 +197,63 @@ struct Headgate: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Show headgate install state.")
         @MainActor func run() async throws {
             print("installed:  \(mark(Bootstrapper().isHeadgateInstalled))")
+        }
+    }
+}
+
+// ── millrace dacular … ───────────────────────────────────────────────────────
+struct Dacular: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "dacular",
+        abstract: "Install and launch the dacular personal data vault (experimental).",
+        subcommands: [Install.self, Start.self, Status.self]
+    )
+
+    struct Install: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Download dacular's Mojo toolchain + source bundle and build it.")
+        @MainActor func run() async throws {
+            let boot = streaming()
+            try await boot.installDacularEngine()
+            print("✓ dacular installed")
+        }
+    }
+
+    struct Start: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Run dacular in this terminal (e.g. `dacular start manifest ~/dacular`).",
+            discussion: """
+            Forwards any arguments to the dacular binary and takes over this \
+            terminal's stdin/stdout. With no controlling terminal (e.g. launched \
+            from the menu app) it opens a new Terminal instead.
+            """)
+        @Argument(parsing: .remaining,
+                  help: "Arguments to pass to dacular (e.g. `manifest ~/dacular`).")
+        var args: [String] = []
+
+        @MainActor func run() async throws {
+            let boot = Bootstrapper()
+            let script = try boot.writeDacularScript()
+            // Attached to a terminal → replace this process with the launcher (see
+            // the headgate Start command for why execv, not a child Process).
+            if isatty(FileHandle.standardInput.fileDescriptor) != 0 {
+                var argv: [UnsafeMutablePointer<CChar>?] =
+                    [strdup("/bin/bash"), strdup(script.path)]
+                for a in args { argv.append(strdup(a)) }
+                argv.append(nil)
+                execv("/bin/bash", argv)
+                throw BootstrapError.step("dacular start",
+                                          "exec /bin/bash failed: \(String(cString: strerror(errno)))")
+            } else {
+                try await boot.launchDacularTerminal()
+            }
+        }
+    }
+
+    struct Status: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show dacular install state.")
+        @MainActor func run() async throws {
+            print("installed:  \(mark(Bootstrapper().isDacularInstalled))")
         }
     }
 }
