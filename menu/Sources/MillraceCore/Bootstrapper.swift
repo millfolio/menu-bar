@@ -822,6 +822,7 @@ public final class Bootstrapper: ObservableObject {
         try run(mojo, ["build", "src/dacular.mojo",
                        "-I", "../flare", "-I", "../json", "-I", "../lancedb.mojo/src",
                        "-I", "../pdftotext.mojo/src", "-I", "../zlib.mojo/src",
+                       "-I", "../csv.mojo/src",
                        "-o", "build/dacular"],
                 cwd: dacularDir, env: dacularMojoEnv(python: python))
 
