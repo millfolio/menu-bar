@@ -100,8 +100,9 @@ public final class Bootstrapper: ObservableObject {
 
     // ── dacular (personal data vault) ───────────────────────────────────────────
     // dacular is a one-shot vault CLI built on the SAME Mojo nightly as headgate.
-    // It has no FFI shims or sibling-repo deps yet, so the bundle is just source
-    // and the on-device build is a bare `mojo build src/dacular.mojo`.
+    // Its bundle vendors the toolbox (flare/json + the LanceDB binding + pdftotext/
+    // zlib readers) + prebuilt FFI shims, so the on-device build is
+    // `mojo build src/dacular.mojo -I ../flare -I … ` then installDacularShims().
     private let dacularZipURL =
         URL(string: "https://github.com/millrace/dacular/releases/latest/download/dacular.zip")!
     private var dacularMojoCompilerURL: URL {
@@ -783,8 +784,8 @@ public final class Bootstrapper: ObservableObject {
     }
 
     /// Download dacular's Mojo toolchain + source bundle and build it. Same nightly
-    /// as headgate, but dacular has no FFI shims or sibling deps, so the build is a
-    /// bare `mojo build src/dacular.mojo`.
+    /// as headgate; the bundle vendors flare/json + the LanceDB binding + pdftotext/
+    /// zlib + prebuilt FFI shims, so the build uses `-I` includes + installs shims.
     public func installDacularEngine() async throws {
         let fm = FileManager.default
         for d in [support, dacularMojoPrefix, dacularRoot, cacheDir] {
@@ -812,13 +813,39 @@ public final class Bootstrapper: ObservableObject {
             throw BootstrapError.step("unpack", "dacular zip missing dacular/src/dacular.mojo")
         }
 
-        // 3. Build dacular.
+        // 3. Build dacular against its vendored siblings (flare/json + the LanceDB
+        //    binding + pdftotext/zlib readers), all bundled by package_dacular.sh.
         set("Locating Python…")
         let python = try findPython()
         set("Building dacular (first run, ~1 min)…")
         let mojo = dacularMojoPrefix.appendingPathComponent("bin/mojo").path
-        try run(mojo, ["build", "src/dacular.mojo", "-o", "build/dacular"],
+        try run(mojo, ["build", "src/dacular.mojo",
+                       "-I", "../flare", "-I", "../json", "-I", "../lancedb.mojo/src",
+                       "-I", "../pdftotext.mojo/src", "-I", "../zlib.mojo/src",
+                       "-o", "build/dacular"],
                 cwd: dacularDir, env: dacularMojoEnv(python: python))
+
+        // 4. Put the bundle's FFI shims (libzlibmojo / liblancedbmojo / libflare_*
+        //    + their dylib deps) under the toolchain's lib/, where each binding's
+        //    `$CONDA_PREFIX/lib` lookup finds them at runtime (dacular runs WITH
+        //    CONDA_PREFIX set via run-dacular.sh).
+        try installDacularShims()
+    }
+
+    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the dacular
+    /// Mojo prefix's lib/, where flare/zlib/lancedb's `$CONDA_PREFIX/lib` lookup
+    /// finds them. Mirrors installHeadgateShims.
+    private func installDacularShims() throws {
+        let fm = FileManager.default
+        let libDir = dacularMojoPrefix.appendingPathComponent("lib", isDirectory: true)
+        try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
+        let buildDir = dacularDir.appendingPathComponent("build", isDirectory: true)
+        for name in (try? fm.contentsOfDirectory(atPath: buildDir.path)) ?? []
+        where name.hasSuffix(".so") || name.hasSuffix(".dylib") {
+            let dst = libDir.appendingPathComponent(name)
+            try? fm.removeItem(at: dst)
+            try fm.copyItem(at: buildDir.appendingPathComponent(name), to: dst)
+        }
     }
 
     /// `mojo build` env for the dacular toolchain prefix.
