@@ -121,14 +121,21 @@ struct MenuContent: View {
         }
     }
 
-    /// dacular (personal data vault, experimental): install (download toolchain +
-    /// bundle, build) and start (open a ready-to-use Terminal — a one-shot CLI).
+    /// dacular (personal data vault): the umbrella for the vault use case. "Install
+    /// vault…" provisions the combined server (chat + embeddings) + headgate +
+    /// dacular; "Open vault chat…" ensures the server is running, starts the
+    /// headgate web chat in VAULT mode, and opens http://localhost:10000. The
+    /// dacular CLI (`Start dacular (CLI)…`) stays available standalone.
     @ViewBuilder
     private var dacularActions: some View {
-        if bootstrapper.isDacularInstalled {
+        // The vault is fully installed when all three engines are present.
+        let vaultInstalled = bootstrapper.isServerInstalled
+            && bootstrapper.isHeadgateInstalled && bootstrapper.isDacularInstalled
+        if vaultInstalled {
+            Button("Open vault chat…") { bootstrapper.startVaultChatFireAndForget() }
             Button("Start dacular (CLI)…") { bootstrapper.startDacular() }
         } else {
-            Button("Install dacular…") { bootstrapper.installDacular() }
+            Button("Install vault…") { bootstrapper.installVaultFireAndForget() }
                 .disabled(bootstrapper.isBusy)
         }
         Button("View dacular on GitHub") {

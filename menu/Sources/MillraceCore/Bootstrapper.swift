@@ -63,6 +63,12 @@ public final class Bootstrapper: ObservableObject {
     /// quality target; its tokenizer.json is read directly by the engine.
     public static let model = "Qwen/Qwen2.5-3B-Instruct"
     public static let modelSlug = "Qwen--Qwen2.5-3B-Instruct"
+    /// SECONDARY embedding model. The combined server resolves this from the HF
+    /// cache to serve /v1/embeddings (else that endpoint 503s). dacular's indexer
+    /// + vault search hit it, so the installer fetches its weights too — via the
+    /// same native-Mojo downloader, another HF id. Single-file safetensors (small).
+    public static let embedModel = "Qwen/Qwen3-Embedding-0.6B"
+    public static let embedModelSlug = "Qwen--Qwen3-Embedding-0.6B"
 
     private var mojoCompilerURL: URL {
         URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.mojoVersion)-release.conda")!
@@ -191,7 +197,15 @@ public final class Bootstrapper: ObservableObject {
         FileManager.default.fileExists(
             atPath: hfHome.appendingPathComponent("hub/models--\(Self.modelSlug)/refs/main").path)
     }
-    /// Ready to launch: engine built and weights downloaded.
+    /// The embedding model's weights are fully downloaded (refs/main is the
+    /// downloader's last write). When present, the combined server serves
+    /// /v1/embeddings (so dacular index/search work with no manual download).
+    public var embedWeightsPresent: Bool {
+        FileManager.default.fileExists(
+            atPath: hfHome.appendingPathComponent("hub/models--\(Self.embedModelSlug)/refs/main").path)
+    }
+    /// Ready to launch: engine built and (chat) weights downloaded. The embedding
+    /// weights are not required to start the chat server, so they don't gate this.
     public var canStartServer: Bool { isServerInstalled && weightsPresent && !serverRunning }
 
     // ── logging ──────────────────────────────────────────────────────────────
@@ -245,6 +259,14 @@ public final class Bootstrapper: ObservableObject {
     /// Provision the Mojo toolchain, engine source, build, and weights. Throws on
     /// the first failure (the CLI surfaces it; the menu wrapper maps it to `phase`).
     public func installServer() async throws {
+        // Idempotent fast-path: everything (engine + both models' weights) already
+        // present → nothing to do. Otherwise fall through; the steps below each
+        // skip what's already done (toolchain, weights), so a partial install
+        // resumes (e.g. just the missing embedding weights).
+        if isServerInstalled && weightsPresent && embedWeightsPresent {
+            set("server already installed — skipping")
+            return
+        }
         let fm = FileManager.default
         for d in [support, mojoPrefix, engineRoot, cacheDir, hfHome] {
             try fm.createDirectory(at: d, withIntermediateDirectories: true)
@@ -274,12 +296,21 @@ public final class Bootstrapper: ObservableObject {
                         args: ["-I", "../jinja2.mojo/src", "-I", "../flare"], out: "build/server")
         signServerIdentity()
 
-        if !weightsPresent {
+        if !weightsPresent || !embedWeightsPresent {
             set("Building downloader…")
             try buildBinary(python: python, source: "src/download.mojo",
                             args: ["-I", "../flare"], out: "build/download")
+        }
+        if !weightsPresent {
             set("Downloading model weights (\(Self.model), several GB)…")
-            try downloadWeights()
+            try downloadWeights(Self.model)
+        }
+        // The combined server resolves the embedding model from the HF cache to
+        // serve /v1/embeddings (dacular's indexer + vault search use it). Fetch its
+        // weights with the same native downloader so the vault works out of the box.
+        if !embedWeightsPresent {
+            set("Downloading embedding model weights (\(Self.embedModel))…")
+            try downloadWeights(Self.embedModel)
         }
 
         ensureConfig(at: millraceConfigURL, Self.millraceConfigDefault)
@@ -567,11 +598,11 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
-    private func downloadWeights() throws {
+    private func downloadWeights(_ modelID: String) throws {
         let dl = backendDir.appendingPathComponent("build/download").path
         var env = runtimeEnv()
         env["HF_HOME"] = hfHome.path
-        try run(dl, [Self.model], cwd: backendDir, env: env)
+        try run(dl, [modelID], cwd: backendDir, env: env)
     }
 
     // ── headgate: install ──────────────────────────────────────────────────────
@@ -590,6 +621,11 @@ public final class Bootstrapper: ObservableObject {
     /// from the server: headgate is on a different nightly and ships its own
     /// vendored flare/json/jinja2.mojo + prebuilt FFI shims.
     public func installHeadgateEngine() async throws {
+        // Idempotent: skip the whole download+build if the binary is already there.
+        if isHeadgateInstalled {
+            set("headgate already installed — skipping")
+            return
+        }
         let fm = FileManager.default
         for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
             try fm.createDirectory(at: d, withIntermediateDirectories: true)
@@ -787,6 +823,11 @@ public final class Bootstrapper: ObservableObject {
     /// as headgate; the bundle vendors flare/json + the LanceDB binding + pdftotext/
     /// zlib + prebuilt FFI shims, so the build uses `-I` includes + installs shims.
     public func installDacularEngine() async throws {
+        // Idempotent: skip the whole download+build if the binary is already there.
+        if isDacularInstalled {
+            set("dacular already installed — skipping")
+            return
+        }
         let fm = FileManager.default
         for d in [support, dacularMojoPrefix, dacularRoot, cacheDir] {
             try fm.createDirectory(at: d, withIntermediateDirectories: true)
@@ -899,6 +940,105 @@ public final class Bootstrapper: ObservableObject {
         try run("/usr/bin/osascript",
                 ["-e", "tell application \"Terminal\" to activate",
                  "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
+    }
+
+    // ── dacular: the VAULT umbrella (millrace dacular …) ─────────────────────────
+    // dacular is the umbrella entry point for the personal-data-vault use case. It
+    // composes the three engines: the combined inference server (chat + embeddings
+    // — both models' weights), headgate (the harness + its vault web chat), and the
+    // dacular vault tools/indexer.
+
+    /// Resolve the vault dir: an explicit arg wins, then $DACULAR_VAULT, then
+    /// ~/dacular. Matches headgate/dacular's own `_vault_dir()` resolution.
+    public func vaultDir(_ arg: String? = nil) -> String {
+        if let arg, !arg.isEmpty { return arg }
+        let env = ProcessInfo.processInfo.environment["DACULAR_VAULT"]
+        if let env, !env.isEmpty { return env }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("dacular", isDirectory: true).path
+    }
+
+    /// `millrace dacular install` — install the combined inference server (+ both
+    /// models' weights) + headgate + dacular, idempotently. Each step skips what's
+    /// already installed (see the guards in installServer/HeadgateEngine/Dacular-
+    /// Engine), so re-running is cheap and reuses anything present.
+    public func installVault() async throws {
+        try await installServer()           // engine + chat + embedding weights
+        try await installHeadgateEngine()   // the harness + vault web chat server
+        try await installDacularEngine()    // the vault tools + indexer
+    }
+
+    /// Menu-app entry point: fire-and-forget umbrella install, drives `phase`.
+    public func installVaultFireAndForget() {
+        guard !isBusy else { return }
+        phase = .running("Starting…")
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.installVault(); await self.set(done: true) }
+            catch { await self.set(failed: humanError(error)) }
+        }
+    }
+
+    /// Write `run-dacular-web.sh` — the VAULT web chat launcher. Like
+    /// writeHeadgateWebScript, but exports HEADGATE_VAULT=1 + HEADGATE_VAULT_DIR
+    /// (+ DACULAR_VAULT and the loopback dacular URLs) and execs headgate's
+    /// serve-web.sh, so the headgate web server comes up in VAULT mode pointed at
+    /// the vault dir. The vault tools the generated program calls reach the
+    /// combined inference server over loopback (:8000). Returns its path.
+    @discardableResult
+    public func writeDacularWebScript(vaultDir dir: String) throws -> URL {
+        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
+        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
+        let script = support.appendingPathComponent("run-dacular-web.sh")
+        let body = """
+        #!/bin/bash
+        cd '\(headgateDir.path)'
+        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
+        export MODULAR_HOME='\(modularHome)'
+        export PATH='\(mojoBin)':"$PATH"
+        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
+        # VAULT mode: the headgate web server answers questions about the vault dir.
+        export HEADGATE_VAULT=1
+        export HEADGATE_VAULT_DIR='\(dir)'
+        export DACULAR_VAULT='\(dir)'
+        # The vault tools (search/ask_local) hit the combined inference server over
+        # loopback — embeddings + chat on one port (:8000).
+        export DACULAR_EMBED_URL='http://127.0.0.1:8000/v1'
+        export DACULAR_LOCAL_URL='http://127.0.0.1:8000/v1'
+        # headgate compiles the generated vault program against the dacular sources —
+        # point its -I resolution at the installed dacular checkout.
+        export HEADGATE_DACULAR='\(dacularDir.path)'
+        exec bash scripts/serve-web.sh
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    /// `millrace dacular start` / menu "Open vault chat…": ensure the combined
+    /// server is running (launchd), then start the headgate web chat in VAULT mode
+    /// and open http://localhost:10000. The script opens the browser itself.
+    public func startVaultChat(vaultDir dir: String) async throws {
+        // 1. Ensure the combined inference server is up (idempotent).
+        if isServerInstalled && weightsPresent {
+            refreshServerRunning()
+            if !serverRunning { try startServer() }
+        }
+        // 2. Start the headgate vault web chat in a new Terminal (it opens :10000).
+        let script = try writeDacularWebScript(vaultDir: dir)
+        let cmd = "'\(script.path)'"
+        try run("/usr/bin/osascript",
+                ["-e", "tell application \"Terminal\" to activate",
+                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
+    }
+
+    /// Menu-app entry point: open the vault chat (fire-and-forget).
+    public func startVaultChatFireAndForget() {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do { try await self.startVaultChat(vaultDir: self.vaultDir()) }
+            catch { await self.set(failed: "vault chat: \(humanError(error))") }
+        }
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

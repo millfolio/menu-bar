@@ -202,40 +202,58 @@ struct Headgate: AsyncParsableCommand {
 }
 
 // ── millrace dacular … ───────────────────────────────────────────────────────
+// dacular is the umbrella entry point for the personal-data-vault use case:
+// `install` provisions the combined inference server (chat + embeddings, both
+// models' weights) + headgate + dacular; `start` runs the vault web chat; `index`
+// builds the vault index; `ask` is a one-shot vault answer.
 struct Dacular: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "dacular",
-        abstract: "Install and launch the dacular personal data vault (experimental).",
-        subcommands: [Install.self, Start.self, Status.self]
+        abstract: "The personal data vault — install, chat, index, and ask.",
+        subcommands: [Install.self, Start.self, Index.self, Ask.self, Status.self]
     )
 
     struct Install: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Download dacular's Mojo toolchain + source bundle and build it.")
+            abstract: "Install the vault: inference server (+ chat & embedding weights) + headgate + dacular.",
+            discussion: """
+            Idempotent — reuses anything already installed. Provisions the combined \
+            inference server (chat + embeddings, including both models' weights), \
+            the headgate harness + its vault web chat, and the dacular vault tools.
+            """)
         @MainActor func run() async throws {
             let boot = streaming()
-            try await boot.installDacularEngine()
-            print("✓ dacular installed")
+            try await boot.installVault()
+            print("✓ vault installed (server + headgate + dacular)")
         }
     }
 
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Run dacular in this terminal (e.g. `dacular start manifest ~/dacular`).",
+            abstract: "Open the vault chat at http://localhost:10000 (or pass args to run the dacular CLI).",
             discussion: """
-            Forwards any arguments to the dacular binary and takes over this \
-            terminal's stdin/stdout. With no controlling terminal (e.g. launched \
-            from the menu app) it opens a new Terminal instead.
+            With NO arguments: ensures the combined inference server is running, \
+            starts the headgate web chat in VAULT mode pointed at your vault dir \
+            ($DACULAR_VAULT, else ~/dacular), and opens http://localhost:10000 — a \
+            chat box answering questions about your vault.
+
+            With ARGUMENTS: forwards them to the dacular binary (e.g. \
+            `dacular start manifest ~/dacular`) and takes over this terminal.
             """)
         @Argument(parsing: .remaining,
-                  help: "Arguments to pass to dacular (e.g. `manifest ~/dacular`).")
+                  help: "Optional dacular CLI args. Omit to open the vault chat.")
         var args: [String] = []
 
         @MainActor func run() async throws {
             let boot = Bootstrapper()
+            // No args → the vault web chat (server + headgate web vault + browser).
+            if args.isEmpty {
+                try await boot.startVaultChat(vaultDir: boot.vaultDir())
+                print("✓ vault chat starting — http://localhost:10000")
+                return
+            }
+            // Args → passthrough to the dacular binary (existing behavior).
             let script = try boot.writeDacularScript()
-            // Attached to a terminal → replace this process with the launcher (see
-            // the headgate Start command for why execv, not a child Process).
             if isatty(FileHandle.standardInput.fileDescriptor) != 0 {
                 var argv: [UnsafeMutablePointer<CChar>?] =
                     [strdup("/bin/bash"), strdup(script.path)]
@@ -250,10 +268,70 @@ struct Dacular: AsyncParsableCommand {
         }
     }
 
-    struct Status: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show dacular install state.")
+    struct Index: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Build the vault index over a folder (`dacular index <folder>`).",
+            discussion: """
+            Forwards to the dacular binary's `index` command, which embeds every \
+            file's chunks via the combined inference server's /v1/embeddings and \
+            stores them in the on-device LanceDB index. Needs the server running.
+            """)
+        @Argument(help: "The folder to index (your vault dir).")
+        var folder: String
+
         @MainActor func run() async throws {
-            print("installed:  \(mark(Bootstrapper().isDacularInstalled))")
+            let boot = Bootstrapper()
+            let script = try boot.writeDacularScript()
+            // exec the dacular launcher with `index <folder>`.
+            let argv: [UnsafeMutablePointer<CChar>?] =
+                [strdup("/bin/bash"), strdup(script.path), strdup("index"), strdup(folder), nil]
+            execv("/bin/bash", argv)
+            throw BootstrapError.step("dacular index",
+                                      "exec /bin/bash failed: \(String(cString: strerror(errno)))")
+        }
+    }
+
+    struct Ask: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "One-shot vault answer (`dacular ask \"<question>\"`).",
+            discussion: """
+            Runs the headgate vault loop (`headgate vault "<question>" <vaultdir>`): \
+            a model writes a Mojo program that uses the dacular vault tools over your \
+            real data locally, and the answer is printed here. The vault dir is \
+            $DACULAR_VAULT, else ~/dacular. Needs the inference server running.
+            """)
+        @Argument(parsing: .remaining,
+                  help: "The question to ask your vault.")
+        var question: [String] = []
+
+        @MainActor func run() async throws {
+            guard !question.isEmpty else {
+                throw BootstrapError.step("dacular ask", "no question given")
+            }
+            let boot = Bootstrapper()
+            let q = question.joined(separator: " ")
+            let dir = boot.vaultDir()
+            // Run the headgate vault loop via the headgate launcher: it execs
+            // `./build/headgate "$@"`, so pass `vault "<q>" <dir>`.
+            let script = try boot.writeHeadgateScript()
+            let argv: [UnsafeMutablePointer<CChar>?] =
+                [strdup("/bin/bash"), strdup(script.path),
+                 strdup("vault"), strdup(q), strdup(dir), nil]
+            execv("/bin/bash", argv)
+            throw BootstrapError.step("dacular ask",
+                                      "exec /bin/bash failed: \(String(cString: strerror(errno)))")
+        }
+    }
+
+    struct Status: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show vault install state.")
+        @MainActor func run() async throws {
+            let boot = Bootstrapper()
+            print("server:     \(mark(boot.isServerInstalled))")
+            print("weights:    \(mark(boot.weightsPresent))")
+            print("embeddings: \(mark(boot.embedWeightsPresent))")
+            print("headgate:   \(mark(boot.isHeadgateInstalled))")
+            print("dacular:    \(mark(boot.isDacularInstalled))")
         }
     }
 }
