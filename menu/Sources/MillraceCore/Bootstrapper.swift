@@ -57,7 +57,7 @@ public final class Bootstrapper: ObservableObject {
     public var isBusy: Bool { if case .running = phase { return true }; return false }
 
     // ── pinned manifest (keep in sync with inference-server/pixi.lock) ─────────────
-    public static let mojoVersion = "1.0.0b2.dev2026053106"
+    public static let mojoVersion = "1.0.0b3.dev2026061206"
     public static let condaChannel = "https://conda.modular.com/max-nightly"
     /// Default model served by the server. The 3B is int4-friendly and the
     /// quality target; its tokenizer.json is read directly by the engine.
@@ -87,7 +87,7 @@ public final class Bootstrapper: ObservableObject {
     // (its flare/json forks don't build on the server's), so it gets its own
     // toolchain + install tree. It's a one-shot CLI (not a daemon), so "start"
     // opens a ready-to-use Terminal rather than launching a server.
-    public static let headgateMojoVersion = "1.0.0b2.dev2026060706"
+    public static let headgateMojoVersion = "1.0.0b3.dev2026061206"
     private let headgateZipURL =
         URL(string: "https://github.com/millrace/headgate/releases/latest/download/headgate.zip")!
     private var headgateMojoCompilerURL: URL {
