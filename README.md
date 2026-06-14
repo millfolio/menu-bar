@@ -1,6 +1,6 @@
 # Millrace (menu-bar app + CLI)
 
-> Part of [**millrace**](https://millrace.me) — local-first LLM inference on Apple Silicon.
+> Part of [**millrace**](https://millrace.app) — local-first LLM inference on Apple Silicon.
 
 The desktop companions for the
 [millrace inference server](https://github.com/millrace/inference-server) (the
