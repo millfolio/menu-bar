@@ -27,7 +27,7 @@ echo "==> sha256 $SHA" >&2
 
 cat > "$OUT" <<EOF
 class Millrace < Formula
-  desc "CLI for the local millrace inference server and headgate privacy harness"
+  desc "CLI for the local millrace inference server"
   homepage "https://github.com/$REPO"
   # version / url / sha256 are bumped per release by dist/homebrew/update-formula.sh
   # (downloads the millrace-macos.tar.gz release asset and fills in its checksum).

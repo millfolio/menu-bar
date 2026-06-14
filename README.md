@@ -5,10 +5,13 @@
 The desktop companions for the
 [millrace inference server](https://github.com/millrace/inference-server) (the
 pure-Mojo local LLM engine): a macOS **menu-bar app** and a **`millrace` CLI**.
-Either one bootstraps the whole stack — fetch the Mojo toolchain, build the
-engine, download model weights, serve, and launch opencode — and they also
-install and launch **headgate**, the privacy harness. Both share one install
-tree and one launchd-managed server.
+Either one bootstraps the server — fetch the Mojo toolchain, build the engine,
+download model weights, serve, and launch opencode. Both share one install tree
+and one launchd-managed server.
+
+> Looking for the personal data vault? That's [**dacular**](https://dacular.app)
+> — its own `dacular` CLI ([dacularapp/cli](https://github.com/dacularapp/cli)),
+> which installs this server plus headgate and the vault on top.
 
 ## Layout
 
@@ -40,32 +43,26 @@ Then, from the menu bar:
 2. **Start server** — runs it (as a launchd LaunchAgent) on `http://127.0.0.1:8000`.
 3. **Start opencode…** — opens opencode in a Terminal, pointed at the server.
 
-The same menu installs and launches **headgate** (the privacy harness).
-
 ### Command line (Homebrew)
 
 ```sh
 brew install millrace/tap/millrace
 
-millrace server install     # toolchain + engine + weights (one time, several GB)
-millrace server start       # launchd LaunchAgent on http://127.0.0.1:8000
-millrace server status      # installed? weights? running? serving what?
-millrace opencode           # open opencode pointed at the server
-
-millrace headgate install   # the privacy harness (separate Mojo toolchain)
-millrace headgate start     # opens a ready-to-use Terminal
-
-millrace server logs -f     # tail the engine log
-millrace server stop
+millrace install     # toolchain + engine + weights (one time, several GB)
+millrace start       # launchd LaunchAgent on http://127.0.0.1:8000
+millrace status      # installed? weights? running? serving what?
+millrace logs -f     # tail the engine log
+millrace stop        # stop the server
+millrace opencode    # open opencode pointed at the server
 ```
 
-Run `millrace --help` (or `millrace server --help`) for the full command list.
+Run `millrace --help` for the full command list.
 
 ### From source (needs macOS 14+ and a Swift toolchain)
 
 ```sh
 cd menu && swift run                                 # run the menu app in dev
-cd menu && swift run millrace-cli server status      # run the CLI in dev
+cd menu && swift run millrace-cli status             # run the CLI in dev
 cd installer && ./install.sh                         # build + install the app to /Applications
 cd installer && ./make_pkg.sh Millrace.pkg           # build the installer .pkg
 ```

@@ -8,7 +8,7 @@ each GitHub Release as `millrace-macos.tar.gz` by `.github/workflows/release.yml
 
 ```sh
 brew install millrace/tap/millrace
-millrace server status
+millrace status
 ```
 
 ## Releasing a new version
@@ -49,5 +49,5 @@ git -C homebrew-tap add Formula/millrace.rb && git -C homebrew-tap commit -m "mi
   anyway.)
 - **Shared state with the app.** The CLI and the menu-bar app use the same
   install tree (`~/Library/Application Support/Millrace`) and the same launchd
-  job (`me.millrace.server`), so `millrace server start` and the app's "Start
-  server" drive one process — either can start/stop/observe it.
+  job (`me.millrace.server`), so `millrace start` and the app's "Start server"
+  drive one process — either can start/stop/observe it.
