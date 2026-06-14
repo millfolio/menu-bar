@@ -63,10 +63,10 @@ public final class Bootstrapper: ObservableObject {
     /// quality target; its tokenizer.json is read directly by the engine.
     public static let model = "Qwen/Qwen2.5-3B-Instruct"
     public static let modelSlug = "Qwen--Qwen2.5-3B-Instruct"
-    /// SECONDARY embedding model. The combined server resolves this from the HF
-    /// cache to serve /v1/embeddings (else that endpoint 503s). dacular's indexer
-    /// + vault search hit it, so the installer fetches its weights too — via the
-    /// same native-Mojo downloader, another HF id. Single-file safetensors (small).
+    /// SECONDARY embedding model. The server resolves this from the HF cache to
+    /// serve /v1/embeddings (else that endpoint 503s), so the installer fetches its
+    /// weights too — via the same native-Mojo downloader, another HF id.
+    /// Single-file safetensors (small).
     public static let embedModel = "Qwen/Qwen3-Embedding-0.6B"
     public static let embedModelSlug = "Qwen--Qwen3-Embedding-0.6B"
 
@@ -82,58 +82,14 @@ public final class Bootstrapper: ObservableObject {
     private let serverZipURL =
         URL(string: "https://github.com/millrace/inference-server/releases/latest/download/runner.zip")!
 
-    // ── headgate (privacy harness) ─────────────────────────────────────────────
-    // headgate is a separate engine on a DIFFERENT Mojo nightly than the server
-    // (its flare/json forks don't build on the server's), so it gets its own
-    // toolchain + install tree. It's a one-shot CLI (not a daemon), so "start"
-    // opens a ready-to-use Terminal rather than launching a server.
-    public static let headgateMojoVersion = "1.0.0b3.dev2026061206"
-    private let headgateZipURL =
-        URL(string: "https://github.com/millrace/headgate/releases/latest/download/headgate.zip")!
-    private var headgateMojoCompilerURL: URL {
-        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.headgateMojoVersion)-release.conda")!
-    }
-    private var headgateMojoPythonURL: URL {
-        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.headgateMojoVersion)-release.conda")!
-    }
-    private var headgateMojoPrefix: URL { support.appendingPathComponent("headgate-mojo", isDirectory: true) }
-    private var headgateRoot: URL { support.appendingPathComponent("headgate-engine", isDirectory: true) }
-    /// headgate checkout inside the unpacked bundle (sibling of flare/json/jinja2.mojo).
-    private var headgateDir: URL { headgateRoot.appendingPathComponent("headgate", isDirectory: true) }
-    private var headgateBin: URL { headgateDir.appendingPathComponent("build/headgate") }
-    /// The built headgate binary is present.
-    public var isHeadgateInstalled: Bool { FileManager.default.isExecutableFile(atPath: headgateBin.path) }
-
-    // ── dacular (personal data vault) ───────────────────────────────────────────
-    // dacular is a one-shot vault CLI built on the SAME Mojo nightly as headgate.
-    // Its bundle vendors the toolbox (flare/json + the LanceDB binding + pdftotext/
-    // zlib readers) + prebuilt FFI shims, so the on-device build is
-    // `mojo build src/dacular.mojo -I ../flare -I … ` then installDacularShims().
-    private let dacularZipURL =
-        URL(string: "https://github.com/millrace/dacular/releases/latest/download/dacular.zip")!
-    private var dacularMojoCompilerURL: URL {
-        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.headgateMojoVersion)-release.conda")!
-    }
-    private var dacularMojoPythonURL: URL {
-        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.headgateMojoVersion)-release.conda")!
-    }
-    private var dacularMojoPrefix: URL { support.appendingPathComponent("dacular-mojo", isDirectory: true) }
-    private var dacularRoot: URL { support.appendingPathComponent("dacular-engine", isDirectory: true) }
-    /// dacular checkout inside the unpacked bundle.
-    private var dacularDir: URL { dacularRoot.appendingPathComponent("dacular", isDirectory: true) }
-    private var dacularBin: URL { dacularDir.appendingPathComponent("build/dacular") }
-    /// The built dacular binary is present.
-    public var isDacularInstalled: Bool { FileManager.default.isExecutableFile(atPath: dacularBin.path) }
-
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
-    // editable starting point. The engines read these (millrace = inference-server,
-    // headgate = headgate); we NEVER overwrite an existing file.
+    // editable starting point. The engine reads this (millrace = inference-server);
+    // we NEVER overwrite an existing file.
     private var dotConfig: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
     }
     private var millraceConfigURL: URL { dotConfig.appendingPathComponent("millrace/config.json") }
-    private var headgateConfigURL: URL { dotConfig.appendingPathComponent("headgate/config.json") }
 
     private static let millraceConfigDefault = """
     {
@@ -141,18 +97,6 @@ public final class Bootstrapper: ObservableObject {
       "model": "Qwen/Qwen2.5-3B-Instruct",
       "q4": false,
       "kv_budget_mb": 8192
-    }
-    """
-    private static let headgateConfigDefault = """
-    {
-      "local_url": "http://127.0.0.1:8000/v1",
-      "local_model": "Qwen2.5-0.5B-Instruct",
-      "remote_base_url": "https://api.anthropic.com/v1",
-      "remote_model": "claude-sonnet-4-6",
-      "remote_token_budget": 200000,
-      "mock": false,
-      "use_local_summary": false,
-      "data_dir": ""
     }
     """
 
@@ -198,8 +142,7 @@ public final class Bootstrapper: ObservableObject {
             atPath: hfHome.appendingPathComponent("hub/models--\(Self.modelSlug)/refs/main").path)
     }
     /// The embedding model's weights are fully downloaded (refs/main is the
-    /// downloader's last write). When present, the combined server serves
-    /// /v1/embeddings (so dacular index/search work with no manual download).
+    /// downloader's last write). When present, the server serves /v1/embeddings.
     public var embedWeightsPresent: Bool {
         FileManager.default.fileExists(
             atPath: hfHome.appendingPathComponent("hub/models--\(Self.embedModelSlug)/refs/main").path)
@@ -305,9 +248,8 @@ public final class Bootstrapper: ObservableObject {
             set("Downloading model weights (\(Self.model), several GB)…")
             try downloadWeights(Self.model)
         }
-        // The combined server resolves the embedding model from the HF cache to
-        // serve /v1/embeddings (dacular's indexer + vault search use it). Fetch its
-        // weights with the same native downloader so the vault works out of the box.
+        // The server resolves the embedding model from the HF cache to serve
+        // /v1/embeddings; fetch its weights with the same native downloader.
         if !embedWeightsPresent {
             set("Downloading embedding model weights (\(Self.embedModel))…")
             try downloadWeights(Self.embedModel)
@@ -603,442 +545,6 @@ public final class Bootstrapper: ObservableObject {
         var env = runtimeEnv()
         env["HF_HOME"] = hfHome.path
         try run(dl, [modelID], cwd: backendDir, env: env)
-    }
-
-    // ── headgate: install ──────────────────────────────────────────────────────
-    /// Menu-app entry point: fire-and-forget, drives `phase`.
-    public func installHeadgate() {
-        guard !isBusy else { return }
-        phase = .running("Starting…")
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.installHeadgateEngine(); await self.set(done: true) }
-            catch { await self.set(failed: humanError(error)) }
-        }
-    }
-
-    /// Download headgate's Mojo toolchain + source bundle and build it. Separate
-    /// from the server: headgate is on a different nightly and ships its own
-    /// vendored flare/json/jinja2.mojo + prebuilt FFI shims.
-    public func installHeadgateEngine() async throws {
-        // Idempotent: skip the whole download+build if the binary is already there.
-        if isHeadgateInstalled {
-            set("headgate already installed — skipping")
-            return
-        }
-        let fm = FileManager.default
-        for d in [support, headgateMojoPrefix, headgateRoot, cacheDir] {
-            try fm.createDirectory(at: d, withIntermediateDirectories: true)
-        }
-        logHeader("Install headgate")
-
-        // 1. Mojo toolchain (headgate's nightly — distinct from the engine's).
-        if !fm.fileExists(atPath: headgateMojoPrefix.appendingPathComponent("bin/mojo").path) {
-            set("Downloading Mojo compiler for headgate (~70 MB)…")
-            let compiler = try await download(headgateMojoCompilerURL, name: "headgate-mojo-compiler.conda")
-            set("Extracting Mojo…")
-            try extractConda(compiler, into: headgateMojoPrefix)
-            let py = try await download(headgateMojoPythonURL, name: "headgate-mojo-python.conda")
-            try extractConda(py, into: headgateMojoPrefix)
-        }
-        try relocateMojoPrefix(headgateMojoPrefix)
-
-        // 2. headgate source bundle (headgate + vendored flare/json/jinja2.mojo +
-        //    prebuilt FFI shims), published by headgate CI.
-        set("Downloading headgate source…")
-        let zip = try await download(headgateZipURL, name: "headgate.zip")
-        set("Unpacking headgate…")
-        try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", headgateRoot.path])
-        guard fm.fileExists(atPath: headgateDir.appendingPathComponent("src/headgate.mojo").path) else {
-            throw BootstrapError.step("unpack", "headgate zip missing headgate/src/headgate.mojo")
-        }
-
-        // 3. Build headgate against its vendored siblings.
-        set("Locating Python…")
-        let python = try findPython()
-        set("Building headgate (first run, ~1 min)…")
-        let mojo = headgateMojoPrefix.appendingPathComponent("bin/mojo").path
-        try run(mojo, ["build", "src/headgate.mojo",
-                       "-I", "../flare", "-I", "../json", "-I", "../jinja2.mojo/src",
-                       "-o", "build/headgate"],
-                cwd: headgateDir, env: headgateMojoEnv(python: python))
-        // The HTTP server for the web UI (serves web/dist + POST /chat on :10000).
-        set("Building headgate web server…")
-        try run(mojo, ["build", "src/server.mojo",
-                       "-I", "../flare", "-I", "../json", "-I", "../jinja2.mojo/src",
-                       "-o", "build/headgate-server"],
-                cwd: headgateDir, env: headgateMojoEnv(python: python))
-
-        // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare finds
-        //    them via $CONDA_PREFIX/lib at runtime — headgate runs WITH CONDA_PREFIX
-        //    set (it shells `mojo build` for the sandboxed generated-code compile),
-        //    unlike the always-serving server.
-        try installHeadgateShims()
-        ensureConfig(at: headgateConfigURL, Self.headgateConfigDefault)
-    }
-
-    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the headgate
-    /// Mojo prefix's lib/, where flare's `$CONDA_PREFIX/lib` lookup finds them.
-    private func installHeadgateShims() throws {
-        let fm = FileManager.default
-        let libDir = headgateMojoPrefix.appendingPathComponent("lib", isDirectory: true)
-        try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
-        let buildDir = headgateDir.appendingPathComponent("build", isDirectory: true)
-        for name in (try? fm.contentsOfDirectory(atPath: buildDir.path)) ?? []
-        where name.hasSuffix(".so") || name.hasSuffix(".dylib") {
-            let dst = libDir.appendingPathComponent(name)
-            try? fm.removeItem(at: dst)
-            try fm.copyItem(at: buildDir.appendingPathComponent(name), to: dst)
-        }
-    }
-
-    /// `mojo build` env for the headgate toolchain prefix.
-    private func headgateMojoEnv(python: URL) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let extraPath = "\(python.deletingLastPathComponent().path):\(headgateMojoPrefix.appendingPathComponent("bin").path)"
-        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        env["CONDA_PREFIX"] = headgateMojoPrefix.path
-        env["MODULAR_HOME"] = headgateMojoPrefix.appendingPathComponent("share/max").path
-        return env
-    }
-
-    // ── headgate: start (open a ready-to-use Terminal) ──────────────────────────
-    /// headgate is a one-shot CLI, so "start" opens a Terminal in the install dir
-    /// with the toolchain env pre-set — the user sets ANTHROPIC_API_KEY, points it
-    /// at their data, and runs `./build/headgate`.
-    public func startHeadgate() {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.launchHeadgateTerminal() }
-            catch { await self.set(failed: "headgate: \(humanError(error))") }
-        }
-    }
-
-    /// Write the `run-headgate.sh` launcher — sets the toolchain env (headgate
-    /// shells `mojo build` for the sandboxed generated-code compile), cd's to the
-    /// install dir, and execs the headgate binary, forwarding any args (`"$@"`) as
-    /// the task. Shared by the menu app (runs it in a NEW Terminal) and the CLI
-    /// (execs it in the CURRENT terminal so headgate takes over stdin/stdout — a
-    /// one-shot run with a task, or an interactive REPL with none). Returns its path.
-    @discardableResult
-    public func writeHeadgateScript() throws -> URL {
-        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
-        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
-        // Single-quote paths (they live under "Application Support" — note the space).
-        let script = support.appendingPathComponent("run-headgate.sh")
-        let body = """
-        #!/bin/bash
-        cd '\(headgateDir.path)'
-        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
-        export MODULAR_HOME='\(modularHome)'
-        export PATH='\(mojoBin)':"$PATH"
-        # flare's bundled OpenSSL has a CI-baked CA path; point it at the system
-        # bundle so HTTPS to the Anthropic API verifies (else CertificateUntrusted).
-        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
-        exec ./build/headgate "$@"
-        """
-        try body.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return script
-    }
-
-    public func launchHeadgateTerminal() async throws {
-        let script = try writeHeadgateScript()
-        let cmd = "'\(script.path)'"
-        try run("/usr/bin/osascript",
-                ["-e", "tell application \"Terminal\" to activate",
-                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
-    }
-
-    // ── headgate: web (server on :10000 + open the browser) ─────────────────────
-    /// Write the `run-headgate-web.sh` launcher: set the toolchain env, start the
-    /// HTTP server (which serves the built web UI + the /chat API on :10000), and
-    /// open the browser at it. Shared by the menu app (new Terminal) and the CLI
-    /// (execs it in the current terminal). Returns its path.
-    @discardableResult
-    public func writeHeadgateWebScript() throws -> URL {
-        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
-        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
-        let script = support.appendingPathComponent("run-headgate-web.sh")
-        let body = """
-        #!/bin/bash
-        cd '\(headgateDir.path)'
-        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
-        export MODULAR_HOME='\(modularHome)'
-        export PATH='\(mojoBin)':"$PATH"
-        # flare's bundled OpenSSL has a CI-baked CA path; use the system bundle.
-        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
-        # serve-web.sh: bind 127.0.0.1:10000, open the UI, and expose it on the
-        # tailnet via `tailscale serve` when Tailscale is available (else localhost).
-        exec bash scripts/serve-web.sh
-        """
-        try body.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return script
-    }
-
-    /// Menu-app entry point: open the headgate web app in a new Terminal.
-    public func startHeadgateWeb() {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.launchHeadgateWebTerminal() }
-            catch { await self.set(failed: "headgate web: \(humanError(error))") }
-        }
-    }
-
-    public func launchHeadgateWebTerminal() async throws {
-        let script = try writeHeadgateWebScript()
-        let cmd = "'\(script.path)'"
-        try run("/usr/bin/osascript",
-                ["-e", "tell application \"Terminal\" to activate",
-                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
-    }
-
-    /// Stop the headgate web server (started by `headgate web`). It runs as a
-    /// foreground process (not a launchd agent), so terminate it by name —
-    /// killing the server makes serve-web.sh's own `wait` return and its cleanup
-    /// trap tear down any `tailscale serve` mapping. Returns true if one was
-    /// running. Best-effort; never throws.
-    @discardableResult
-    public func stopHeadgateWeb() -> Bool {
-        // pkill exits 0 if it signaled at least one process, 1 if none matched.
-        let hit = (try? runStatus("/usr/bin/pkill", ["-f", "build/headgate-server"])) == 0
-        _ = try? runStatus("/usr/bin/pkill", ["-f", "scripts/serve-web.sh"])
-        return hit
-    }
-
-    // ── dacular: install ────────────────────────────────────────────────────────
-    /// Menu-app entry point: fire-and-forget, drives `phase`.
-    public func installDacular() {
-        guard !isBusy else { return }
-        phase = .running("Starting…")
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.installDacularEngine(); await self.set(done: true) }
-            catch { await self.set(failed: humanError(error)) }
-        }
-    }
-
-    /// Download dacular's Mojo toolchain + source bundle and build it. Same nightly
-    /// as headgate; the bundle vendors flare/json + the LanceDB binding + pdftotext/
-    /// zlib + prebuilt FFI shims, so the build uses `-I` includes + installs shims.
-    public func installDacularEngine() async throws {
-        // Idempotent: skip the whole download+build if the binary is already there.
-        if isDacularInstalled {
-            set("dacular already installed — skipping")
-            return
-        }
-        let fm = FileManager.default
-        for d in [support, dacularMojoPrefix, dacularRoot, cacheDir] {
-            try fm.createDirectory(at: d, withIntermediateDirectories: true)
-        }
-        logHeader("Install dacular")
-
-        // 1. Mojo toolchain (same nightly as headgate).
-        if !fm.fileExists(atPath: dacularMojoPrefix.appendingPathComponent("bin/mojo").path) {
-            set("Downloading Mojo compiler for dacular (~70 MB)…")
-            let compiler = try await download(dacularMojoCompilerURL, name: "dacular-mojo-compiler.conda")
-            set("Extracting Mojo…")
-            try extractConda(compiler, into: dacularMojoPrefix)
-            let py = try await download(dacularMojoPythonURL, name: "dacular-mojo-python.conda")
-            try extractConda(py, into: dacularMojoPrefix)
-        }
-        try relocateMojoPrefix(dacularMojoPrefix)
-
-        // 2. dacular source bundle (just source — no FFI/sibling deps yet).
-        set("Downloading dacular source…")
-        let zip = try await download(dacularZipURL, name: "dacular.zip")
-        set("Unpacking dacular…")
-        try run("/usr/bin/unzip", ["-o", "-q", zip.path, "-d", dacularRoot.path])
-        guard fm.fileExists(atPath: dacularDir.appendingPathComponent("src/dacular.mojo").path) else {
-            throw BootstrapError.step("unpack", "dacular zip missing dacular/src/dacular.mojo")
-        }
-
-        // 3. Build dacular against its vendored siblings (flare/json + the LanceDB
-        //    binding + pdftotext/zlib readers), all bundled by package_dacular.sh.
-        set("Locating Python…")
-        let python = try findPython()
-        set("Building dacular (first run, ~1 min)…")
-        let mojo = dacularMojoPrefix.appendingPathComponent("bin/mojo").path
-        try run(mojo, ["build", "src/dacular.mojo",
-                       "-I", "../flare", "-I", "../json", "-I", "../lancedb.mojo/src",
-                       "-I", "../pdftotext.mojo/src", "-I", "../zlib.mojo/src",
-                       "-I", "../csv.mojo/src",
-                       "-o", "build/dacular"],
-                cwd: dacularDir, env: dacularMojoEnv(python: python))
-
-        // 4. Put the bundle's FFI shims (libzlibmojo / liblancedbmojo / libflare_*
-        //    + their dylib deps) under the toolchain's lib/, where each binding's
-        //    `$CONDA_PREFIX/lib` lookup finds them at runtime (dacular runs WITH
-        //    CONDA_PREFIX set via run-dacular.sh).
-        try installDacularShims()
-    }
-
-    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the dacular
-    /// Mojo prefix's lib/, where flare/zlib/lancedb's `$CONDA_PREFIX/lib` lookup
-    /// finds them. Mirrors installHeadgateShims.
-    private func installDacularShims() throws {
-        let fm = FileManager.default
-        let libDir = dacularMojoPrefix.appendingPathComponent("lib", isDirectory: true)
-        try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
-        let buildDir = dacularDir.appendingPathComponent("build", isDirectory: true)
-        for name in (try? fm.contentsOfDirectory(atPath: buildDir.path)) ?? []
-        where name.hasSuffix(".so") || name.hasSuffix(".dylib") {
-            let dst = libDir.appendingPathComponent(name)
-            try? fm.removeItem(at: dst)
-            try fm.copyItem(at: buildDir.appendingPathComponent(name), to: dst)
-        }
-    }
-
-    /// `mojo build` env for the dacular toolchain prefix.
-    private func dacularMojoEnv(python: URL) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let extraPath = "\(python.deletingLastPathComponent().path):\(dacularMojoPrefix.appendingPathComponent("bin").path)"
-        env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        env["CONDA_PREFIX"] = dacularMojoPrefix.path
-        env["MODULAR_HOME"] = dacularMojoPrefix.appendingPathComponent("share/max").path
-        return env
-    }
-
-    // ── dacular: start (open a ready-to-use Terminal) ───────────────────────────
-    /// dacular is a one-shot vault CLI, so "start" opens a Terminal in the install
-    /// dir with the toolchain env pre-set — the user runs e.g.
-    /// `./build/dacular manifest ~/dacular`.
-    public func startDacular() {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.launchDacularTerminal() }
-            catch { await self.set(failed: "dacular: \(humanError(error))") }
-        }
-    }
-
-    /// Write the `run-dacular.sh` launcher — sets the toolchain env, cd's to the
-    /// install dir, and execs the dacular binary forwarding any args (`"$@"`).
-    /// Shared by the menu app (new Terminal) and the CLI (execs in the current
-    /// terminal). Returns its path.
-    @discardableResult
-    public func writeDacularScript() throws -> URL {
-        let mojoBin = dacularMojoPrefix.appendingPathComponent("bin").path
-        let modularHome = dacularMojoPrefix.appendingPathComponent("share/max").path
-        let script = support.appendingPathComponent("run-dacular.sh")
-        let body = """
-        #!/bin/bash
-        cd '\(dacularDir.path)'
-        export CONDA_PREFIX='\(dacularMojoPrefix.path)'
-        export MODULAR_HOME='\(modularHome)'
-        export PATH='\(mojoBin)':"$PATH"
-        exec ./build/dacular "$@"
-        """
-        try body.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return script
-    }
-
-    public func launchDacularTerminal() async throws {
-        let script = try writeDacularScript()
-        let cmd = "'\(script.path)'"
-        try run("/usr/bin/osascript",
-                ["-e", "tell application \"Terminal\" to activate",
-                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
-    }
-
-    // ── dacular: the VAULT umbrella (millrace dacular …) ─────────────────────────
-    // dacular is the umbrella entry point for the personal-data-vault use case. It
-    // composes the three engines: the combined inference server (chat + embeddings
-    // — both models' weights), headgate (the harness + its vault web chat), and the
-    // dacular vault tools/indexer.
-
-    /// Resolve the vault dir: an explicit arg wins, then $DACULAR_VAULT, then
-    /// ~/dacular. Matches headgate/dacular's own `_vault_dir()` resolution.
-    public func vaultDir(_ arg: String? = nil) -> String {
-        if let arg, !arg.isEmpty { return arg }
-        let env = ProcessInfo.processInfo.environment["DACULAR_VAULT"]
-        if let env, !env.isEmpty { return env }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("dacular", isDirectory: true).path
-    }
-
-    /// `millrace dacular install` — install the combined inference server (+ both
-    /// models' weights) + headgate + dacular, idempotently. Each step skips what's
-    /// already installed (see the guards in installServer/HeadgateEngine/Dacular-
-    /// Engine), so re-running is cheap and reuses anything present.
-    public func installVault() async throws {
-        try await installServer()           // engine + chat + embedding weights
-        try await installHeadgateEngine()   // the harness + vault web chat server
-        try await installDacularEngine()    // the vault tools + indexer
-    }
-
-    /// Menu-app entry point: fire-and-forget umbrella install, drives `phase`.
-    public func installVaultFireAndForget() {
-        guard !isBusy else { return }
-        phase = .running("Starting…")
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.installVault(); await self.set(done: true) }
-            catch { await self.set(failed: humanError(error)) }
-        }
-    }
-
-    /// Write `run-dacular-web.sh` — the VAULT web chat launcher. Like
-    /// writeHeadgateWebScript, but exports HEADGATE_VAULT=1 + HEADGATE_VAULT_DIR
-    /// (+ DACULAR_VAULT and the loopback dacular URLs) and execs headgate's
-    /// serve-web.sh, so the headgate web server comes up in VAULT mode pointed at
-    /// the vault dir. The vault tools the generated program calls reach the
-    /// combined inference server over loopback (:8000). Returns its path.
-    @discardableResult
-    public func writeDacularWebScript(vaultDir dir: String) throws -> URL {
-        let mojoBin = headgateMojoPrefix.appendingPathComponent("bin").path
-        let modularHome = headgateMojoPrefix.appendingPathComponent("share/max").path
-        let script = support.appendingPathComponent("run-dacular-web.sh")
-        let body = """
-        #!/bin/bash
-        cd '\(headgateDir.path)'
-        export CONDA_PREFIX='\(headgateMojoPrefix.path)'
-        export MODULAR_HOME='\(modularHome)'
-        export PATH='\(mojoBin)':"$PATH"
-        [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
-        # VAULT mode: the headgate web server answers questions about the vault dir.
-        export HEADGATE_VAULT=1
-        export HEADGATE_VAULT_DIR='\(dir)'
-        export DACULAR_VAULT='\(dir)'
-        # The vault tools (search/ask_local) hit the combined inference server over
-        # loopback — embeddings + chat on one port (:8000).
-        export DACULAR_EMBED_URL='http://127.0.0.1:8000/v1'
-        export DACULAR_LOCAL_URL='http://127.0.0.1:8000/v1'
-        # headgate compiles the generated vault program against the dacular sources —
-        # point its -I resolution at the installed dacular checkout.
-        export HEADGATE_DACULAR='\(dacularDir.path)'
-        exec bash scripts/serve-web.sh
-        """
-        try body.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return script
-    }
-
-    /// `millrace dacular start` / menu "Open vault chat…": ensure the combined
-    /// server is running (launchd), then start the headgate web chat in VAULT mode
-    /// and open http://localhost:10000. The script opens the browser itself.
-    public func startVaultChat(vaultDir dir: String) async throws {
-        // 1. Ensure the combined inference server is up (idempotent).
-        if isServerInstalled && weightsPresent {
-            refreshServerRunning()
-            if !serverRunning { try startServer() }
-        }
-        // 2. Start the headgate vault web chat in a new Terminal (it opens :10000).
-        let script = try writeDacularWebScript(vaultDir: dir)
-        let cmd = "'\(script.path)'"
-        try run("/usr/bin/osascript",
-                ["-e", "tell application \"Terminal\" to activate",
-                 "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
-    }
-
-    /// Menu-app entry point: open the vault chat (fire-and-forget).
-    public func startVaultChatFireAndForget() {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do { try await self.startVaultChat(vaultDir: self.vaultDir()) }
-            catch { await self.set(failed: "vault chat: \(humanError(error))") }
-        }
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
