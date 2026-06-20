@@ -290,7 +290,6 @@ public final class Bootstrapper: ObservableObject {
         set("Unpacking engine…")
         try unpackZip(zip, into: engineRoot)
 
-        set("Locating Python…")
         let python = try findPython()
 
         set("Building engine (first run, ~1 min)…")
