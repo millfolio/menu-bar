@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Millrace",
+    name: "Millfolio",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
@@ -17,29 +17,29 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         // Shared engine-lifecycle logic (install/build/start the server + headgate),
-        // UI-agnostic, used by BOTH the menu-bar app and the `millrace` CLI.
+        // UI-agnostic, used by BOTH the menu-bar app and the `millfolio` CLI.
         .target(
-            name: "MillraceCore",
+            name: "MillfolioCore",
             dependencies: ["CZstd"],
-            path: "Sources/MillraceCore"
+            path: "Sources/MillfolioCore"
         ),
-        // The menu-bar app. Binary is `Millrace` (the installer bundles it as
-        // Millrace.app — see installer/bundle.sh, which hardcodes that name).
+        // The menu-bar app. Binary is `Millfolio` (the installer bundles it as
+        // Millfolio.app — see installer/bundle.sh, which hardcodes that name).
         .executableTarget(
-            name: "Millrace",
-            dependencies: ["MillraceCore"],
-            path: "Sources/Millrace"
+            name: "Millfolio",
+            dependencies: ["MillfolioCore"],
+            path: "Sources/Millfolio"
         ),
-        // The `millrace` CLI. Target/binary is `millrace-cli` to avoid colliding
-        // with the `Millrace` app binary on case-insensitive filesystems; CI /
-        // the Homebrew formula install it as `millrace`.
+        // The `millfolio` CLI. Target/binary is `millfolio-cli` to avoid colliding
+        // with the `Millfolio` app binary on case-insensitive filesystems; CI /
+        // the Homebrew formula install it as `millfolio`.
         .executableTarget(
-            name: "millrace-cli",
+            name: "millfolio-cli",
             dependencies: [
-                "MillraceCore",
+                "MillfolioCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "Sources/millrace-cli"
+            path: "Sources/millfolio-cli"
         ),
     ]
 )

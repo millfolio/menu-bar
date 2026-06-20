@@ -13,11 +13,11 @@ import AppKit
 ///      the CLI and the menu app share one managed process).
 ///   3. **Start opencode** — point opencode at the running server (new Terminal).
 ///
-/// Everything lives under ~/Library/Application Support/Millrace, including the
+/// Everything lives under ~/Library/Application Support/Millfolio, including the
 /// model weights (HF_HOME=<support>/hf), so uninstall is a single directory.
 ///
 /// This type is UI-agnostic on purpose: the menu-bar app observes it as an
-/// `ObservableObject` (via `phase`/`serverRunning`), while the `millrace` CLI
+/// `ObservableObject` (via `phase`/`serverRunning`), while the `millfolio` CLI
 /// drives the same methods and streams progress through `onProgress`.
 ///
 /// NOTE: the Mojo fetch is "rattler-by-URL" — we don't link the rattler crate, we
@@ -80,18 +80,18 @@ public final class Bootstrapper: ObservableObject {
     /// prebuilt libflare_tls.so), published by inference-server CI. The asset is still
     /// named `runner.zip` (wire name retained for now).
     private let serverZipURL =
-        URL(string: "https://github.com/millrace/inference-server/releases/latest/download/runner.zip")!
+        URL(string: "https://github.com/millfolio/engine/releases/latest/download/runner.zip")!
 
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
-    // editable starting point. The engine reads this (millrace = inference-server);
-    // we NEVER overwrite an existing file.
+    // editable starting point. The engine reads this; we NEVER overwrite an
+    // existing file.
     private var dotConfig: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
     }
-    private var millraceConfigURL: URL { dotConfig.appendingPathComponent("millrace/config.json") }
+    private var millfolioConfigURL: URL { dotConfig.appendingPathComponent("millfolio/config.json") }
 
-    private static let millraceConfigDefault = """
+    private static let millfolioConfigDefault = """
     {
       "port": 8000,
       "model": "Qwen/Qwen2.5-3B-Instruct",
@@ -116,7 +116,7 @@ public final class Bootstrapper: ObservableObject {
     // ── install locations ─────────────────────────────────────────────────────
     private var support: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Millrace", isDirectory: true)
+            .appendingPathComponent("Millfolio", isDirectory: true)
     }
     private var mojoPrefix: URL { support.appendingPathComponent("mojo", isDirectory: true) }
     private var engineRoot: URL { support.appendingPathComponent("engine", isDirectory: true) }
@@ -128,7 +128,7 @@ public final class Bootstrapper: ObservableObject {
     private var serverBin: URL { backendDir.appendingPathComponent("build/server") }
     /// All subprocess output (mojo build, weights download, the running server)
     /// is appended here so errors that flash by in the menu can be read in full.
-    public var logFileURL: URL { support.appendingPathComponent("Millrace.log") }
+    public var logFileURL: URL { support.appendingPathComponent("Millfolio.log") }
     public var hasLog: Bool { FileManager.default.fileExists(atPath: logFileURL.path) }
 
     /// The built engine server binary is present.
@@ -199,9 +199,68 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
+    // ── one-time migration: millrace → millfolio (pre-rename installs) ───────────
+    /// Older versions installed under `~/Library/Application Support/Millrace`, with
+    /// config/cache under `~/.config/millrace` + `~/.cache/millrace` and a
+    /// `me.millrace.server` LaunchAgent. Move each to its `millfolio` location once,
+    /// so upgraders keep their multi-GB model weights instead of re-downloading.
+    ///
+    /// Idempotent and best-effort: a path is moved only when the legacy location
+    /// exists and the new one does not, so re-running (or a fresh install) is a
+    /// no-op. After moving the tree, the stale engine *build* is dropped (weights
+    /// under `hf/` are kept) so `installServer` rebuilds the binary against the new
+    /// source + `~/.config/millfolio` config path.
+    public func migrateLegacyLayout() {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let appSup = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+
+        // Boot out + remove the old LaunchAgent first; the new install writes the
+        // me.millfolio.server agent, and leaving the old one loaded runs a stale
+        // binary against a config path that no longer exists.
+        let oldAgent = home.appendingPathComponent("Library/LaunchAgents/me.millrace.server.plist")
+        if fm.fileExists(atPath: oldAgent.path) {
+            _ = try? run("/bin/launchctl", ["bootout", "gui/\(getuid())/me.millrace.server"])
+            try? fm.removeItem(at: oldAgent)
+            appendLog("migrated: removed legacy LaunchAgent me.millrace.server\n")
+        }
+
+        let legacyTree = appSup.appendingPathComponent("Millrace", isDirectory: true)
+        let migratedTree = fm.fileExists(atPath: legacyTree.path)
+            && !fm.fileExists(atPath: support.path)
+
+        let moves: [(URL, URL)] = [
+            (legacyTree, support),
+            (home.appendingPathComponent(".config/millrace", isDirectory: true),
+             home.appendingPathComponent(".config/millfolio", isDirectory: true)),
+            (home.appendingPathComponent(".cache/millrace", isDirectory: true),
+             home.appendingPathComponent(".cache/millfolio", isDirectory: true)),
+        ]
+        for (old, new) in moves where fm.fileExists(atPath: old.path) && !fm.fileExists(atPath: new.path) {
+            do {
+                try fm.createDirectory(at: new.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.moveItem(at: old, to: new)
+                appendLog("migrated: \(old.path) → \(new.path)\n")
+            } catch {
+                appendLog("migration skipped for \(old.lastPathComponent): \(humanError(error))\n")
+            }
+        }
+
+        guard migratedTree else { return }
+        // Keep the model weights (hf/) + cache; drop the stale engine checkout so the
+        // server is rebuilt from the new source against ~/.config/millfolio.
+        try? fm.removeItem(at: engineRoot)
+        // The per-day diagnostic log inside the moved tree kept its old name.
+        let oldLog = support.appendingPathComponent("Millrace.log")
+        if fm.fileExists(atPath: oldLog.path) && !fm.fileExists(atPath: logFileURL.path) {
+            try? fm.moveItem(at: oldLog, to: logFileURL)
+        }
+    }
+
     /// Provision the Mojo toolchain, engine source, build, and weights. Throws on
     /// the first failure (the CLI surfaces it; the menu wrapper maps it to `phase`).
     public func installServer() async throws {
+        migrateLegacyLayout()   // upgrade an older millrace-layout install in place
         // Idempotent fast-path: everything (engine + both models' weights) already
         // present → nothing to do. Otherwise fall through; the steps below each
         // skip what's already done (toolchain, weights), so a partial install
@@ -255,14 +314,14 @@ public final class Bootstrapper: ObservableObject {
             try downloadWeights(Self.embedModel)
         }
 
-        ensureConfig(at: millraceConfigURL, Self.millraceConfigDefault)
+        ensureConfig(at: millfolioConfigURL, Self.millfolioConfigDefault)
     }
 
     // ── step 2: start / stop server (launchd LaunchAgent) ────────────────────────
-    // The server runs as a per-user LaunchAgent (me.millrace.server) instead of a
-    // child Process, so a CLI `millrace server start` and the menu app's "Start
+    // The server runs as a per-user LaunchAgent (me.millfolio.server) instead of a
+    // child Process, so a CLI `millfolio server start` and the menu app's "Start
     // server" drive the SAME managed process — either surface can start/stop/see it.
-    public static let serverLabel = "me.millrace.server"
+    public static let serverLabel = "me.millfolio.server"
     private var launchAgentURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/\(Self.serverLabel).plist")
@@ -354,7 +413,7 @@ public final class Bootstrapper: ObservableObject {
         #!/bin/bash
         export OPENCODE_CONFIG="\(configPath)"
         export OPENAI_BASE_URL="\(base)"
-        export OPENAI_API_KEY="millrace"
+        export OPENAI_API_KEY="millfolio"
         # opencode's own dir + common bins on PATH (Terminal already sources the
         # user's profile, but be explicit in case it shells out to helpers).
         export PATH="\(URL(fileURLWithPath: opencode).deletingLastPathComponent().path):$PATH"
@@ -391,11 +450,11 @@ public final class Bootstrapper: ObservableObject {
         for id in ids { models[id] = ["name": id.components(separatedBy: "/").last ?? id] }
         let config: [String: Any] = [
             "$schema": "https://opencode.ai/config.json",
-            "model": "millrace/" + first,
-            "provider": ["millrace": [
+            "model": "millfolio/" + first,
+            "provider": ["millfolio": [
                 "npm": "@ai-sdk/openai-compatible",
-                "name": "millrace (local)",
-                "options": ["baseURL": baseURL, "apiKey": "millrace"],
+                "name": "millfolio (local)",
+                "options": ["baseURL": baseURL, "apiKey": "millfolio"],
                 "models": models,
             ]],
         ]
@@ -529,12 +588,12 @@ public final class Bootstrapper: ObservableObject {
     /// `mojo build` ad-hoc "linker-signs" the server with the identifier "server".
     /// macOS's "<name> can run in the background" notification + Login Items entry
     /// for the LaunchAgent take that signing identifier as the name, so re-sign it
-    /// (still ad-hoc) as "millrace". Best-effort — purely cosmetic, so a failure
+    /// (still ad-hoc) as "millfolio". Best-effort — purely cosmetic, so a failure
     /// never blocks the install.
     private func signServerIdentity() {
         do {
             try run("/usr/bin/codesign",
-                    ["--force", "--sign", "-", "--identifier", "millrace", serverBin.path])
+                    ["--force", "--sign", "-", "--identifier", "millfolio", serverBin.path])
         } catch {
             appendLog("could not re-sign server identity (cosmetic): \(humanError(error))\n")
         }

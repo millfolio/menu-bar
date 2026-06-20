@@ -1,15 +1,15 @@
 import Foundation
 
-/// Reachability + version + currently-served model of a local millrace server,
+/// Reachability + version + currently-served model of a local engine server,
 /// polled over its `/v1/version` endpoint.
 public enum ServerStatus: Equatable {
     case unknown, online, offline
 
     public var title: String {
         switch self {
-        case .unknown: return "Millrace: checking…"
-        case .online: return "Millrace: running"
-        case .offline: return "Millrace: not running"
+        case .unknown: return "Millfolio: checking…"
+        case .online: return "Millfolio: running"
+        case .offline: return "Millfolio: not running"
         }
     }
 
@@ -24,8 +24,8 @@ public enum ServerStatus: Equatable {
 }
 
 @MainActor
-public final class MillraceClient: ObservableObject {
-    /// Default millrace server address (see inference-server: `pixi run serve`).
+public final class MillfolioClient: ObservableObject {
+    /// Default engine server address (see engine: `pixi run serve`).
     public let baseURL = "http://127.0.0.1:8000"
 
     @Published public var status: ServerStatus = .unknown
@@ -45,7 +45,7 @@ public final class MillraceClient: ObservableObject {
         Task { await poll() }
     }
 
-    /// GET /v1/version → {"engine":"millrace","version":"…","model":"…"}.
+    /// GET /v1/version → {"engine":"millfolio","version":"…","model":"…"}.
     /// Drives the "is the engine installed/running?" state and shows its version.
     public func poll() async {
         guard let url = URL(string: baseURL + "/v1/version") else { return }

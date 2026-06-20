@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Millrace</string>
+    <string>Millfolio</string>
     <key>CFBundleDisplayName</key>
-    <string>Millrace</string>
+    <string>Millfolio</string>
     <key>CFBundleIdentifier</key>
-    <string>me.millrace.app</string>
+    <string>me.millfolio.app</string>
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
-    <string>Millrace</string>
+    <string>Millfolio</string>
     <key>CFBundleIconFile</key>
-    <string>Millrace</string>
+    <string>Millfolio</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -24,6 +24,6 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>millrace</string>
+    <string>millfolio</string>
 </dict>
 </plist>

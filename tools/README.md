@@ -17,4 +17,4 @@ tools/release.sh 0.4.6
 ```
 
 `release.sh` assumes HEAD is the commit to ship and that `dist/homebrew/update-formula.sh`
-+ the `millrace/homebrew-tap` repo exist (they do).
++ the `millfolio/homebrew-tap` repo exist (they do).

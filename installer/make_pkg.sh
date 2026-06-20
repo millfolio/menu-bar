@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
 #
-# Build Millrace.app and package it into a signed macOS Installer .pkg that
+# Build Millfolio.app and package it into a signed macOS Installer .pkg that
 # installs to /Applications. Unlike a drag .dmg, a .pkg runs a `preinstall`
-# script (scripts/preinstall) that quits a running Millrace first, so updating
+# script (scripts/preinstall) that quits a running Millfolio first, so updating
 # over a running app "just works" instead of failing with "app is in use".
 #
-# Usage:   ./make_pkg.sh [output.pkg]      # default: Millrace.pkg in CWD
+# Usage:   ./make_pkg.sh [output.pkg]      # default: Millfolio.pkg in CWD
 #
-# Version: $MILLRACE_VERSION (default 0.1.0) — CI passes the release tag.
-# Signing: $MILLRACE_INSTALLER_IDENTITY (a "Developer ID Installer" identity or
+# Version: $MILLFOLIO_VERSION (default 0.1.0) — CI passes the release tag.
+# Signing: $MILLFOLIO_INSTALLER_IDENTITY (a "Developer ID Installer" identity or
 #          its SHA-1). When unset, the .pkg is left unsigned (productsign skipped)
 #          — fine for local testing, but a distributable build must be signed +
 #          notarized. The app bundle itself is signed by bundle.sh via
-#          $MILLRACE_SIGN_IDENTITY (a "Developer ID Application" identity).
+#          $MILLFOLIO_SIGN_IDENTITY (a "Developer ID Application" identity).
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="Millrace"
+APP_NAME="Millfolio"
 OUT_PKG="${1:-${APP_NAME}.pkg}"
-BUNDLE_ID="me.millrace.app"
-VERSION="${MILLRACE_VERSION:-0.1.0}"
+BUNDLE_ID="me.millfolio.app"
+VERSION="${MILLFOLIO_VERSION:-0.1.0}"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-# Payload root mirrors the install location: <root>/Applications/Millrace.app.
+# Payload root mirrors the install location: <root>/Applications/Millfolio.app.
 ROOT="$STAGE/root"
 mkdir -p "$ROOT/Applications"
 "$HERE/bundle.sh" "$ROOT/Applications" >/dev/null
@@ -48,12 +48,12 @@ echo "==> productbuild ..." >&2
 productbuild --package "$COMPONENT" "$PRODUCT" >&2
 
 rm -f "$OUT_PKG"
-SIGN_ID="${MILLRACE_INSTALLER_IDENTITY:-}"
+SIGN_ID="${MILLFOLIO_INSTALLER_IDENTITY:-}"
 if [[ -n "$SIGN_ID" ]]; then
     echo "==> productsign with Developer ID Installer: ${SIGN_ID}" >&2
     productsign --sign "$SIGN_ID" "$PRODUCT" "$OUT_PKG" >&2
 else
-    echo "==> Unsigned .pkg (set MILLRACE_INSTALLER_IDENTITY to sign)" >&2
+    echo "==> Unsigned .pkg (set MILLFOLIO_INSTALLER_IDENTITY to sign)" >&2
     cp "$PRODUCT" "$OUT_PKG"
 fi
 

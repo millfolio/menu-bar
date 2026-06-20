@@ -5,8 +5,8 @@ into a downloadable, signed, notarized `.pkg` installer.
 
 ## Download (recommended)
 
-Grab `Millrace.pkg` from the [latest release](https://github.com/millrace/app/releases/latest)
-(built by CI on every version tag) and open it. The installer puts **Millrace**
+Grab `Millfolio.pkg` from the [latest release](https://github.com/millfolio/app/releases/latest)
+(built by CI on every version tag) and open it. The installer puts **Millfolio**
 in `/Applications` and, via its `preinstall` step, **quits any running copy
 first** — so updating over a running app works instead of failing with "app is in
 use." Signed + notarized, so it installs without a Gatekeeper warning.
@@ -14,33 +14,33 @@ use." Signed + notarized, so it installs without a Gatekeeper warning.
 ## Build locally
 
 ```sh
-./install.sh                 # build + install to /Applications/Millrace.app
+./install.sh                 # build + install to /Applications/Millfolio.app
 ./install.sh ~/Applications  # custom location
-./make_pkg.sh Millrace.pkg   # build the installer .pkg (unsigned unless a cert is set)
+./make_pkg.sh Millfolio.pkg   # build the installer .pkg (unsigned unless a cert is set)
 ```
 
 To run at login: System Settings > General > Login Items > **+** > pick
-`Millrace.app`. To uninstall: `rm -rf /Applications/Millrace.app`.
+`Millfolio.app`. To uninstall: `rm -rf /Applications/Millfolio.app`.
 
 ## Files
 
-- `bundle.sh` — `swift build -c release` + assemble `Millrace.app` (executable +
+- `bundle.sh` — `swift build -c release` + assemble `Millfolio.app` (executable +
   [`Info.plist`](Info.plist), which sets `LSUIElement` for a Dock-less menu-bar
-  agent) + codesign (Developer ID with `MILLRACE_SIGN_IDENTITY`, else ad-hoc).
+  agent) + codesign (Developer ID with `MILLFOLIO_SIGN_IDENTITY`, else ad-hoc).
 - `install.sh` — bundle, then install into `/Applications` (or a given dir).
 - `make_pkg.sh` — bundle into a payload root, `pkgbuild` (with the `scripts/`
   lifecycle scripts) + `productbuild` a product archive, then `productsign` it
-  with the Developer ID Installer identity (`MILLRACE_INSTALLER_IDENTITY`).
+  with the Developer ID Installer identity (`MILLFOLIO_INSTALLER_IDENTITY`).
   Headless, so it's what CI runs.
 - `scripts/preinstall` — runs before the payload is written: quits a running
-  Millrace (and any engine server it launched) so the bundle can be replaced.
+  Millfolio (and any engine server it launched) so the bundle can be replaced.
 - `Info.plist` — the bundle's `Contents/Info.plist`. Drop an icon at
-  `Millrace.icns` here to ship one.
+  `Millfolio.icns` here to ship one.
 
 ## CI
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs
-`make_pkg.sh` on a `macos-14` runner: it builds `Millrace.pkg` on every push
+`make_pkg.sh` on a `macos-14` runner: it builds `Millfolio.pkg` on every push
 (uploaded as a workflow artifact) and, on a `v*` tag, publishes a GitHub Release
 with the `.pkg` attached (its version is taken from the tag). Cut a release with:
 
@@ -76,6 +76,6 @@ base64 -i DeveloperID_Application.p12 | pbcopy   # -> MACOS_CERT_P12
 base64 -i DeveloperID_Installer.p12   | pbcopy   # -> MACOS_INSTALLER_CERT_P12
 ```
 
-`bundle.sh` reads `MILLRACE_SIGN_IDENTITY` to sign the app (hardened runtime +
-timestamp); `make_pkg.sh` reads `MILLRACE_INSTALLER_IDENTITY` to `productsign`
+`bundle.sh` reads `MILLFOLIO_SIGN_IDENTITY` to sign the app (hardened runtime +
+timestamp); `make_pkg.sh` reads `MILLFOLIO_INSTALLER_IDENTITY` to `productsign`
 the `.pkg`; the workflow then `notarytool submit --wait`s and `stapler staple`s it.

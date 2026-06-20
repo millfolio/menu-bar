@@ -1,10 +1,10 @@
-# Millrace (menu-bar app + CLI)
+# Millfolio (menu-bar app + CLI)
 
-> Part of [**millrace**](https://millrace.app) — local-first LLM inference on Apple Silicon.
+> Part of [**millfolio**](https://millfolio.app) — local-first LLM inference on Apple Silicon.
 
 The desktop companions for the
-[millrace inference server](https://github.com/millrace/inference-server) (the
-pure-Mojo local LLM engine): a macOS **menu-bar app** and a **`millrace` CLI**.
+[engine inference server](https://github.com/millfolio/engine) (the
+pure-Mojo local LLM engine): a macOS **menu-bar app** and a **`millfolio` CLI**.
 Either one bootstraps the server — fetch the Mojo toolchain, build the engine,
 download model weights, serve, and launch opencode. Both share one install tree
 and one launchd-managed server.
@@ -17,23 +17,23 @@ and one launchd-managed server.
 
 | folder                            | what                                                            |
 |-----------------------------------|-----------------------------------------------------------------|
-| [`menu/`](menu)                   | Swift Package: `MillraceCore` + the menu-bar app + the `millrace` CLI |
+| [`menu/`](menu)                   | Swift Package: `MillfolioCore` + the menu-bar app + the `millfolio` CLI |
 | [`installer/`](installer)         | packages the app into a `.app` bundle and installs it           |
-| [`dist/homebrew/`](dist/homebrew) | the Homebrew formula + tap tooling for the `millrace` CLI        |
+| [`dist/homebrew/`](dist/homebrew) | the Homebrew formula + tap tooling for the `millfolio` CLI        |
 
 ## Install
 
-Two ways to install — the **menu-bar app** (point-and-click) or the **`millrace`
+Two ways to install — the **menu-bar app** (point-and-click) or the **`millfolio`
 CLI** (Homebrew). They share one install tree
-(`~/Library/Application Support/Millrace`) and one launchd-managed server
-(`me.millrace.server`), so you can start the server from one and see it from the
+(`~/Library/Application Support/Millfolio`) and one launchd-managed server
+(`me.millfolio.server`), so you can start the server from one and see it from the
 other.
 
 ### Menu-bar app
 
-Grab `Millrace.pkg` from the
-[latest release](https://github.com/millrace/app/releases/latest) and open it.
-The installer puts **Millrace** in `/Applications` and quits any running copy
+Grab `Millfolio.pkg` from the
+[latest release](https://github.com/millfolio/app/releases/latest) and open it.
+The installer puts **Millfolio** in `/Applications` and quits any running copy
 first (so updates work), signed + notarized — see [`installer/`](installer).
 
 Then, from the menu bar:
@@ -46,25 +46,25 @@ Then, from the menu bar:
 ### Command line (Homebrew)
 
 ```sh
-brew install millrace/tap/millrace
+brew install millfolio/tap/millfolio
 
-millrace install     # toolchain + engine + weights (one time, several GB)
-millrace start       # launchd LaunchAgent on http://127.0.0.1:8000
-millrace status      # installed? weights? running? serving what?
-millrace logs -f     # tail the engine log
-millrace stop        # stop the server
-millrace opencode    # open opencode pointed at the server
+millfolio install     # toolchain + engine + weights (one time, several GB)
+millfolio start       # launchd LaunchAgent on http://127.0.0.1:8000
+millfolio status      # installed? weights? running? serving what?
+millfolio logs -f     # tail the engine log
+millfolio stop        # stop the server
+millfolio opencode    # open opencode pointed at the server
 ```
 
-Run `millrace --help` for the full command list.
+Run `millfolio --help` for the full command list.
 
 ### From source (needs macOS 14+ and a Swift toolchain)
 
 ```sh
 cd menu && swift run                                 # run the menu app in dev
-cd menu && swift run millrace-cli status             # run the CLI in dev
+cd menu && swift run millfolio-cli status            # run the CLI in dev
 cd installer && ./install.sh                         # build + install the app to /Applications
-cd installer && ./make_pkg.sh Millrace.pkg           # build the installer .pkg
+cd installer && ./make_pkg.sh Millfolio.pkg          # build the installer .pkg
 ```
 
 The CLI is published as a signed universal binary via a Homebrew tap — see

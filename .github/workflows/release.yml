@@ -44,7 +44,7 @@ jobs:
             echo "::error::MACOS_INSTALLER_CERT_P12 is required to sign the .pkg (Developer ID *Installer* cert). Add it (and MACOS_INSTALLER_CERT_PASSWORD) to repo secrets."
             exit 1
           fi
-          KEYCHAIN="$RUNNER_TEMP/millrace.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/millfolio.keychain-db"
           KPW="$(openssl rand -hex 16)"
           security create-keychain -p "$KPW" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
@@ -66,25 +66,25 @@ jobs:
           INST_ID="$(security find-identity -v "$KEYCHAIN" | awk '/Developer ID Installer/{print $2; exit}')"
           if [ -z "$INST_ID" ]; then echo "::error::no Developer ID Installer identity in MACOS_INSTALLER_CERT_P12"; exit 1; fi
           if [ -z "$APP_ID" ]; then echo "::error::no Developer ID Application identity in MACOS_CERT_P12 (the app would be ad-hoc signed -> notarization Invalid)"; exit 1; fi
-          echo "MILLRACE_SIGN_IDENTITY=$APP_ID" >> "$GITHUB_ENV"
-          echo "MILLRACE_INSTALLER_IDENTITY=$INST_ID" >> "$GITHUB_ENV"
-          echo "MILLRACE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "MILLFOLIO_SIGN_IDENTITY=$APP_ID" >> "$GITHUB_ENV"
+          echo "MILLFOLIO_INSTALLER_IDENTITY=$INST_ID" >> "$GITHUB_ENV"
+          echo "MILLFOLIO_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "imported app=${APP_ID:-<none>} installer=$INST_ID"
 
-      - name: Build Millrace.pkg
+      - name: Build Millfolio.pkg
         run: |
           chmod +x installer/*.sh installer/scripts/*
           # Version from the tag (v1.2.3 -> 1.2.3), else 0.0.0-dev.
           VER="0.0.0-dev"
           case "$GITHUB_REF" in refs/tags/v*) VER="${GITHUB_REF#refs/tags/v}";; esac
-          MILLRACE_VERSION="$VER" ./installer/make_pkg.sh "$GITHUB_WORKSPACE/Millrace.pkg"
+          MILLFOLIO_VERSION="$VER" ./installer/make_pkg.sh "$GITHUB_WORKSPACE/Millfolio.pkg"
 
       # Notarize the signed .pkg and staple the ticket. Skipped only if the Apple
       # ID secret is unset (e.g. a fork without credentials).
       - name: Notarize and staple
         if: env.APPLE_ID != ''
         run: |
-          PKG="$GITHUB_WORKSPACE/Millrace.pkg"
+          PKG="$GITHUB_WORKSPACE/Millfolio.pkg"
           # notarytool submit --wait exits 0 even when the result is Invalid, so
           # check the status ourselves and dump Apple's per-issue log on failure.
           OUT="$(xcrun notarytool submit "$PKG" \
@@ -104,46 +104,46 @@ jobs:
           xcrun stapler staple "$PKG"
           xcrun stapler validate "$PKG"
 
-      # Build the `millrace` CLI as a universal (arm64 + x86_64) binary, sign it
+      # Build the `millfolio` CLI as a universal (arm64 + x86_64) binary, sign it
       # with the same Developer ID Application identity + hardened runtime, and
       # tar it for the Homebrew tap. (No notarization: a Developer-ID-signed CLI
       # runs fine from the terminal, and Homebrew doesn't quarantine tap
-      # downloads. The target/binary is `millrace-cli`; we install it as
-      # `millrace` to avoid colliding with the `Millrace` app on case-insensitive
+      # downloads. The target/binary is `millfolio-cli`; we install it as
+      # `millfolio` to avoid colliding with the `Millfolio` app on case-insensitive
       # filesystems.) Done while the signing keychain is still alive.
-      - name: Build millrace CLI (universal, signed)
+      - name: Build millfolio CLI (universal, signed)
         run: |
           cd menu
-          swift build -c release --arch arm64 --arch x86_64 --product millrace-cli
-          BIN="$(swift build -c release --arch arm64 --arch x86_64 --product millrace-cli --show-bin-path)/millrace-cli"
+          swift build -c release --arch arm64 --arch x86_64 --product millfolio-cli
+          BIN="$(swift build -c release --arch arm64 --arch x86_64 --product millfolio-cli --show-bin-path)/millfolio-cli"
           [ -x "$BIN" ] || { echo "::error::CLI binary not found at $BIN"; exit 1; }
-          STAGE="$RUNNER_TEMP/millrace-cli"; mkdir -p "$STAGE"
-          cp "$BIN" "$STAGE/millrace"
-          if [ -n "${MILLRACE_SIGN_IDENTITY:-}" ]; then
-            codesign --force --options runtime --timestamp --sign "$MILLRACE_SIGN_IDENTITY" "$STAGE/millrace"
+          STAGE="$RUNNER_TEMP/millfolio-cli"; mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/millfolio"
+          if [ -n "${MILLFOLIO_SIGN_IDENTITY:-}" ]; then
+            codesign --force --options runtime --timestamp --sign "$MILLFOLIO_SIGN_IDENTITY" "$STAGE/millfolio"
           else
-            echo "==> ad-hoc signing CLI (no Developer ID identity)"; codesign --force --sign - "$STAGE/millrace" || true
+            echo "==> ad-hoc signing CLI (no Developer ID identity)"; codesign --force --sign - "$STAGE/millfolio" || true
           fi
-          codesign --verify --verbose "$STAGE/millrace" || true
-          tar -C "$STAGE" -czf "$GITHUB_WORKSPACE/millrace-macos.tar.gz" millrace
-          echo "millrace-macos.tar.gz sha256:"; shasum -a 256 "$GITHUB_WORKSPACE/millrace-macos.tar.gz"
+          codesign --verify --verbose "$STAGE/millfolio" || true
+          tar -C "$STAGE" -czf "$GITHUB_WORKSPACE/millfolio-macos.tar.gz" millfolio
+          echo "millfolio-macos.tar.gz sha256:"; shasum -a 256 "$GITHUB_WORKSPACE/millfolio-macos.tar.gz"
 
       - name: Clean up keychain
         if: always()
-        run: security delete-keychain "${MILLRACE_KEYCHAIN:-$RUNNER_TEMP/millrace.keychain-db}" || true
+        run: security delete-keychain "${MILLFOLIO_KEYCHAIN:-$RUNNER_TEMP/millfolio.keychain-db}" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Millrace-pkg
-          path: Millrace.pkg
+          name: Millfolio-pkg
+          path: Millfolio.pkg
           if-no-files-found: error
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: millrace-cli
-          path: millrace-macos.tar.gz
+          name: millfolio-cli
+          path: millfolio-macos.tar.gz
           if-no-files-found: error
 
       # On a version tag (e.g. v0.3.1), publish a Release with the .pkg + CLI
@@ -153,13 +153,13 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            Millrace.pkg
-            millrace-macos.tar.gz
+            Millfolio.pkg
+            millfolio-macos.tar.gz
           body: |
-            The Millrace menu-bar app for the millrace inference server.
+            The Millfolio menu-bar app for the engine inference server.
 
-            **Install:** download `Millrace.pkg` and open it — the installer puts
-            **Millrace** in `/Applications` and (via its preinstall step) quits any
+            **Install:** download `Millfolio.pkg` and open it — the installer puts
+            **Millfolio** in `/Applications` and (via its preinstall step) quits any
             running copy first, so updating over a running app just works.
 
             > Signed with a Developer ID Installer certificate and Apple-notarized,

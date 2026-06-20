@@ -1,14 +1,14 @@
 import SwiftUI
 import AppKit
-import MillraceCore
+import MillfolioCore
 
-/// Millrace — a macOS menu-bar companion for the local millrace inference server.
+/// Millfolio — a macOS menu-bar companion for the local engine inference server.
 /// Lives in the menu bar (no Dock icon when bundled with LSUIElement); drives the
 /// engine lifecycle: download the runner (+ model weights), start/stop it, and
 /// open opencode against it.
 @main
-struct MillraceApp: App {
-    @StateObject private var client = MillraceClient()
+struct MillfolioApp: App {
+    @StateObject private var client = MillfolioClient()
     @StateObject private var bootstrapper = Bootstrapper()
 
     var body: some Scene {
@@ -22,10 +22,10 @@ struct MillraceApp: App {
 }
 
 struct MenuContent: View {
-    @ObservedObject var client: MillraceClient
+    @ObservedObject var client: MillfolioClient
     @ObservedObject var bootstrapper: Bootstrapper
 
-    private let engineRepoURL = "https://github.com/millrace/inference-server"
+    private let engineRepoURL = "https://github.com/millfolio/engine"
 
     var body: some View {
         Text(client.status.title)
@@ -53,7 +53,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Quit Millrace") { NSApplication.shared.terminate(nil) }
+        Button("Quit Millfolio") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env swift
 //
-// Generates the Millrace app icon — a partial (half-submerged) mill water-wheel
-// turning in an orange "millrace", on a deep slate-teal squircle — and assembles
-// Millrace.icns. Pure AppKit/CoreGraphics, so it needs no design tools.
+// Generates the Millfolio app icon — a partial (half-submerged) mill water-wheel
+// turning in an orange "race", on a deep slate-teal squircle — and assembles
+// Millfolio.icns. Pure AppKit/CoreGraphics, so it needs no design tools.
 //
-//   swift make_icon.swift     # writes Millrace.iconset/, Millrace.png, Millrace.icns
+//   swift make_icon.swift     # writes Millfolio.iconset/, Millfolio.png, Millfolio.icns
 //
 import AppKit
 
@@ -93,7 +93,7 @@ func renderPNG(size: Int) -> Data {
     cg.setFillColor(accent.cgColor)
     cg.fillEllipse(in: CGRect(x: cx-Rhub*0.42, y: cy-Rhub*0.42, width: Rhub*0.84, height: Rhub*0.84))
 
-    // ── orange millrace over the wheel's lower part → "partial" ────────────────
+    // ── orange race over the wheel's lower part → "partial" ────────────────
     let waterY = pad + content * 0.27
     let amp = content * 0.020
     let water = CGMutablePath()
@@ -120,7 +120,7 @@ func renderPNG(size: Int) -> Data {
 
 // ── emit iconset + master png ───────────────────────────────────────────────
 let fm = FileManager.default
-let iconset = "Millrace.iconset"
+let iconset = "Millfolio.iconset"
 try? fm.removeItem(atPath: iconset)
 try! fm.createDirectory(atPath: iconset, withIntermediateDirectories: true)
 let variants: [(String, Int)] = [
@@ -133,5 +133,5 @@ let variants: [(String, Int)] = [
 for (name, px) in variants {
     try! renderPNG(size: px).write(to: URL(fileURLWithPath: "\(iconset)/\(name).png"))
 }
-try! renderPNG(size: 1024).write(to: URL(fileURLWithPath: "Millrace.png"))
-print("wrote \(iconset)/ and Millrace.png")
+try! renderPNG(size: 1024).write(to: URL(fileURLWithPath: "Millfolio.png"))
+print("wrote \(iconset)/ and Millfolio.png")

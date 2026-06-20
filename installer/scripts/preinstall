@@ -1,32 +1,32 @@
 #!/bin/bash
 #
-# preinstall — runs before the new Millrace.app payload is written.
+# preinstall — runs before the new Millfolio.app payload is written.
 #
 # The previous install failure ("app is in use") happens when the running
-# menu-bar app holds /Applications/Millrace.app open. A .pkg lets us fix that
-# automatically: ask Millrace to quit cleanly, wait for it, then force-kill as a
+# menu-bar app holds /Applications/Millfolio.app open. A .pkg lets us fix that
+# automatically: ask Millfolio to quit cleanly, wait for it, then force-kill as a
 # fallback so the installer can replace the bundle. Also stop any engine server
 # the app launched, since it is a child we don't want orphaned across an update.
 #
 # Always exits 0 — a not-running app is the normal case, not an error.
 
 # Ask the app to quit cleanly (ignored if it isn't running).
-/usr/bin/osascript -e 'tell application "Millrace" to quit' >/dev/null 2>&1 || true
+/usr/bin/osascript -e 'tell application "Millfolio" to quit' >/dev/null 2>&1 || true
 
 # Wait up to ~5s for it to go away.
 for _ in $(seq 1 20); do
-    /usr/bin/pgrep -x Millrace >/dev/null 2>&1 || break
+    /usr/bin/pgrep -x Millfolio >/dev/null 2>&1 || break
     sleep 0.25
 done
 
 # Force-quit if it ignored the polite request.
-if /usr/bin/pgrep -x Millrace >/dev/null 2>&1; then
-    /usr/bin/pkill -x Millrace >/dev/null 2>&1 || true
+if /usr/bin/pgrep -x Millfolio >/dev/null 2>&1; then
+    /usr/bin/pkill -x Millfolio >/dev/null 2>&1 || true
     sleep 0.5
 fi
 
 # Stop an engine server the app may have launched (build/server under the app's
 # support dir), so the update doesn't leave a stale process on :8000.
-/usr/bin/pkill -f 'Application Support/Millrace/engine/.*/build/server' >/dev/null 2>&1 || true
+/usr/bin/pkill -f 'Application Support/Millfolio/engine/.*/build/server' >/dev/null 2>&1 || true
 
 exit 0

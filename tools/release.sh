@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Release the Millrace app + millrace CLI at the current HEAD, end to end:
+# Release the Millfolio app + millfolio CLI at the current HEAD, end to end:
 #
 #   push main  ->  tag vX.Y.Z  ->  wait for the "build pkg" CI (attaches
-#   Millrace.pkg + millrace-macos.tar.gz)  ->  bump the Homebrew formula to the
+#   Millfolio.pkg + millfolio-macos.tar.gz)  ->  bump the Homebrew formula to the
 #   new asset  ->  push the formula to the tap  ->  brew upgrade locally.
 #
 #   tools/release.sh <X.Y.Z>
@@ -14,8 +14,8 @@ set -euo pipefail
 
 VER="${1:?usage: tools/release.sh X.Y.Z}"
 TAG="v$VER"
-REPO="millrace/app"
-TAP_GIT="git@github.com:millrace/homebrew-tap.git"
+REPO="millfolio/app"
+TAP_GIT="git@github.com:millfolio/homebrew-tap.git"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "==> push main + tag $TAG"
@@ -30,7 +30,7 @@ gh run watch "$RID" -R "$REPO" --exit-status
 
 echo "==> bump Homebrew formula to $TAG"
 "$ROOT/dist/homebrew/update-formula.sh" "$TAG"
-git -C "$ROOT" add dist/homebrew/millrace.rb
+git -C "$ROOT" add dist/homebrew/millfolio.rb
 git -C "$ROOT" -c commit.gpgsign=false commit -m "homebrew: bump formula to $TAG" || echo "   (formula unchanged)"
 git -C "$ROOT" push origin main
 
@@ -38,15 +38,15 @@ echo "==> push formula to the tap"
 TAP="$(mktemp -d)"
 git clone -q "$TAP_GIT" "$TAP"
 mkdir -p "$TAP/Formula"
-cp "$ROOT/dist/homebrew/millrace.rb" "$TAP/Formula/millrace.rb"
-git -C "$TAP" add Formula/millrace.rb
-git -C "$TAP" -c commit.gpgsign=false commit -m "millrace $VER" || echo "   (tap unchanged)"
+cp "$ROOT/dist/homebrew/millfolio.rb" "$TAP/Formula/millfolio.rb"
+git -C "$TAP" add Formula/millfolio.rb
+git -C "$TAP" -c commit.gpgsign=false commit -m "millfolio $VER" || echo "   (tap unchanged)"
 git -C "$TAP" push origin main
 rm -rf "$TAP"
 
 echo "==> brew upgrade"
 brew update >/dev/null 2>&1 || true
-brew upgrade millrace/tap/millrace || true
-brew list --versions millrace
+brew upgrade millfolio/tap/millfolio || true
+brew list --versions millfolio
 
 echo "==> released $TAG"
