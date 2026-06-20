@@ -1,0 +1,12 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+layer: 'application'
+tags: ['swift']
+
+tasks:
+  build:
+    command: 'swift build --package-path menu'
+    toolchain: 'system'
+    inputs: ['menu/Sources/**/*.swift', 'menu/Package.swift']
+  check:
+    command: 'swift build --package-path menu'
+    toolchain: 'system'
