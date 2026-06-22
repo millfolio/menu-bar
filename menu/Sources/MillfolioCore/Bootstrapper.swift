@@ -57,7 +57,7 @@ public final class Bootstrapper: ObservableObject {
     public var isBusy: Bool { if case .running = phase { return true }; return false }
 
     // ── pinned manifest (keep in sync with inference-server/pixi.lock) ─────────────
-    public static let mojoVersion = "1.0.0b3.dev2026061206"
+    public static let mojoVersion = "1.0.0b3.dev2026062206"
     public static let condaChannel = "https://conda.modular.com/max-nightly"
     /// Default model served by the server. The 3B is int4-friendly and the
     /// quality target; its tokenizer.json is read directly by the engine.
