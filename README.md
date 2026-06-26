@@ -1,5 +1,7 @@
 # Millfolio (menu-bar app + CLI)
 
+> 💬 **Community:** questions, ideas, and show-and-tell live in [GitHub Discussions](https://github.com/millfolio/millfolio/discussions).
+
 > Part of [**millfolio**](https://millfolio.app) — local-first LLM inference on Apple Silicon.
 
 The desktop companions for the
