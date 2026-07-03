@@ -2,22 +2,23 @@ import SwiftUI
 import AppKit
 import MillfolioCore
 
-/// Millfolio — a macOS menu-bar companion for the local engine inference server.
-/// Lives in the menu bar (no Dock icon when bundled with LSUIElement); drives the
-/// engine lifecycle: download the runner (+ model weights), start/stop it, and
-/// open opencode against it.
+/// Millfolio — a macOS menu-bar companion for the local millfolio runtime.
+/// Lives in the menu bar and owns the app window(s): the first-run onboarding
+/// window (native provisioning) and the main `WKWebView` onto the local web UI at
+/// :10000. The server lifecycle is driven through `MillfolioCore.Bootstrapper` — the
+/// same Swift lib the `mill` CLI uses.
 @main
 struct MillfolioApp: App {
-    // The AppKit delegate owns the native WKWebView main window + the app menu,
-    // and manages the activation policy (menu-bar agent ⇄ Dock-visible window).
+    // The AppKit delegate owns the native windows + the app menu, manages the
+    // activation policy, AND owns the ONE shared Bootstrapper (so the menu controls,
+    // the onboarding window, and the provisioned check all observe the same object).
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     @StateObject private var client = MillfolioClient()
-    @StateObject private var bootstrapper = Bootstrapper()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(client: client, bootstrapper: bootstrapper, appDelegate: appDelegate)
+            MenuContent(client: client, bootstrapper: appDelegate.bootstrapper, appDelegate: appDelegate)
         } label: {
             Image(nsImage: client.status == .online ? MenuBarIcon.active : MenuBarIcon.inactive)
         }
@@ -30,7 +31,7 @@ struct MenuContent: View {
     @ObservedObject var bootstrapper: Bootstrapper
     let appDelegate: AppDelegate
 
-    private let engineRepoURL = "https://github.com/millfolio/engine"
+    private let repoURL = "https://github.com/millfolio/vault"
 
     var body: some View {
         Text(client.status.title)
@@ -48,7 +49,7 @@ struct MenuContent: View {
 
         Divider()
 
-        engineActions
+        vaultActions
 
         Divider()
 
@@ -63,45 +64,39 @@ struct MenuContent: View {
             .keyboardShortcut("q")
     }
 
-    /// The three lifecycle actions, gated on what's installed / running.
+    /// Vault lifecycle actions, gated on whether the runtime is provisioned.
     @ViewBuilder
-    private var engineActions: some View {
-        // Provisioning progress / errors take over while the download runs.
+    private var vaultActions: some View {
         if bootstrapper.isBusy {
             Text(bootstrapper.phase.message ?? "Working…")
+        } else if case .failed(let msg) = bootstrapper.phase {
+            Text("Failed: \(msg.split(separator: "\n").first.map(String.init) ?? msg)")
+                .lineLimit(1)
+            Button("Open setup…") { appDelegate.showOnboarding() }
+        } else if !bootstrapper.isProvisioned {
+            // First run (or a partial install): open the native provisioning window.
+            Button("Set up millfolio…") { appDelegate.showOnboarding() }
         } else {
-            if case .failed(let msg) = bootstrapper.phase {
-                Text("Failed: \(msg.split(separator: "\n").first.map(String.init) ?? msg)")
-                    .lineLimit(1)
-                Button("Open Log") { bootstrapper.openLog() }
-            }
-
-            // 1. Install server (+ weights). Hidden once both are present.
-            if !(bootstrapper.isServerInstalled && bootstrapper.weightsPresent) {
-                Button(downloadLabel) { bootstrapper.downloadServer() }
-            }
-
-            // 2. Start / Stop server.
+            // Provisioned: start / stop the local servers.
             if bootstrapper.serverRunning || client.status == .online {
-                Button("Stop server") { bootstrapper.tryStopServer() }
-                    .disabled(!bootstrapper.serverRunning)
+                Button("Stop millfolio") {
+                    _ = bootstrapper.stopAppServer()
+                    bootstrapper.tryStopServer()
+                }
             } else {
-                Button("Start server") { bootstrapper.tryStartServer() }
-                    .disabled(!bootstrapper.canStartServer)
+                Button("Start millfolio") {
+                    Task { @MainActor in
+                        let dir = bootstrapper.ensureVaultDir()
+                        // The app is the browser (WKWebView), so openBrowser:false.
+                        try? await bootstrapper.startVaultChat(vaultDir: dir, openBrowser: false)
+                        appDelegate.showMainWindow()
+                    }
+                }
             }
-
-            // 3. Start opencode (needs a running server).
-            Button("Start opencode…") { bootstrapper.startOpencode() }
-                .disabled(client.status != .online)
         }
 
-        Button("View engine on GitHub") {
-            if let url = URL(string: engineRepoURL) { NSWorkspace.shared.open(url) }
+        Button("View project on GitHub") {
+            if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
         }
-    }
-
-    private var downloadLabel: String {
-        if case .failed = bootstrapper.phase { return "Retry install server…" }
-        return bootstrapper.isServerInstalled ? "Download model weights…" : "Install server…"
     }
 }

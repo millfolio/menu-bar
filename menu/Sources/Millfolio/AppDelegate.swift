@@ -1,32 +1,86 @@
 import AppKit
 import WebKit
+import MillfolioCore
 
 /// AppKit glue for the app shell: builds the native main menu, owns the main
-/// `WKWebView` window, and manages the activation policy so the menu-bar agent
-/// gains a Dock icon + a real app menu once its window is on screen.
+/// `WKWebView` window + the first-run onboarding window, and manages the activation
+/// policy so the menu-bar agent gains a Dock icon + a real app menu once a window is
+/// on screen.
 ///
-/// The SwiftUI `MenuBarExtra` stays the control/status surface (start/stop the
-/// server, etc.); this delegate adds the *window* — a native view onto the local
-/// web UI running at :10000. The server lifecycle is unchanged (the servers are
-/// LaunchAgents managed elsewhere); the window is purely a view.
+/// The SwiftUI `MenuBarExtra` stays the control/status surface (start/stop, etc.);
+/// this delegate owns the *windows*. On launch it decides between two flows:
+///
+///   * **not provisioned** → the native **onboarding window** runs
+///     `Bootstrapper.installVault()` (the same provision path as `mill install`) and,
+///     on success, hands off to the main window.
+///   * **already provisioned** → straight to the main `WKWebView` window onto the
+///     local web UI at :10000 (the existing flow — unchanged).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    /// The ONE shared Bootstrapper for the whole app (the menu-bar controls, the
+    /// onboarding window, and the launch-time provisioned check all observe it). It
+    /// installs into the shared ~/Library/Application Support/Millfolio tree the
+    /// `mill` CLI uses, so both interoperate on one set of launchd agents.
+    let bootstrapper = Bootstrapper()
+
     private var mainWindowController: MainWindowController?
+    private var onboardingController: OnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A SwiftUI MenuBarExtra-only app has no standard menu bar; supply one so
         // Cmd-C/V/Q/R and the window commands work once we show a window.
         NSApp.mainMenu = MenuBuilder.build()
-        // Open the window on launch — this is a windowed app now, not a pure agent.
-        showMainWindow()
+        // First-run routing: onboard if the runtime isn't provisioned yet, else go
+        // straight to the web window (the existing flow).
+        routeInitialWindow()
     }
 
-    /// Re-open the window when the app is activated with no visible window (Dock
-    /// click, or the "Open millfolio" menu-bar action re-activating us).
+    /// Show onboarding on first run, otherwise the main web window.
+    private func routeInitialWindow() {
+        if bootstrapper.isProvisioned {
+            showMainWindow()
+        } else {
+            showOnboarding()
+        }
+    }
+
+    /// Re-open the appropriate window when the app is activated with no visible
+    /// window (Dock click, or a menu-bar action re-activating us).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showMainWindow() }
+        if !flag { routeInitialWindow() }
         return true
+    }
+
+    // MARK: - Onboarding (first-run provisioning)
+
+    /// Present the native first-run provisioning window. On success it hands off to
+    /// the main web window (the servers are already up by then).
+    func showOnboarding() {
+        let controller: OnboardingWindowController
+        if let existing = onboardingController {
+            controller = existing
+        } else {
+            controller = OnboardingWindowController(bootstrapper: bootstrapper) { [weak self] in
+                self?.finishOnboarding()
+            }
+            onboardingController = controller
+        }
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Onboarding succeeded: close it and show the main web window. The app server is
+    /// already listening on :10000 (onboarding started it with openBrowser:false), so
+    /// the WebWindow's poll overlay loads the page promptly — no connect-error flash.
+    private func finishOnboarding() {
+        onboardingController?.close()
+        onboardingController = nil
+        showMainWindow()
     }
 
     /// Bring the millfolio window to the front (creating it on first use). Called
