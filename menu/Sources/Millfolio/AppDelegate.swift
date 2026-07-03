@@ -24,8 +24,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `mill` CLI uses, so both interoperate on one set of launchd agents.
     let bootstrapper = Bootstrapper()
 
+    /// Owns Sparkle's updater controller (auto-update). Started automatically; the
+    /// menu's "Check for Updates…" items drive it. See Updater.swift.
+    let updater = UpdaterController()
+
     private var mainWindowController: MainWindowController?
     private var onboardingController: OnboardingWindowController?
+
+    /// App-menu "Check for Updates…" target. Routed through the responder chain so it
+    /// works from the native App menu (MenuBuilder) when a window is on screen.
+    @objc func checkForUpdates(_ sender: Any?) {
+        updater.checkForUpdates()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A SwiftUI MenuBarExtra-only app has no standard menu bar; supply one so
@@ -180,6 +190,11 @@ enum MenuBuilder {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About millfolio",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        // Sparkle auto-update. Target nil → routed through the responder chain to the
+        // AppDelegate's checkForUpdates(_:), which drives the shared UpdaterController.
+        appMenu.addItem(withTitle: "Check for Updates…",
+                        action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide millfolio",
                         action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")

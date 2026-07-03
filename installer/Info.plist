@@ -44,5 +44,19 @@
     </dict>
     <key>NSHumanReadableCopyright</key>
     <string>millfolio</string>
+    <!-- Sparkle auto-update (Developer-ID / non-App-Store). The appcast is hosted at
+         the marketing site root; each update item is an EdDSA-signed, zipped
+         Millfolio.app verified against SUPublicEDKey. The matching PRIVATE key lives
+         in a developer login keychain (and CI's SPARKLE_PRIVATE_KEY secret) — see
+         SPARKLE.md. -->
+    <key>SUFeedURL</key>
+    <string>https://millfolio.app/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>UugYFpDtw08kzTIocCokisDnrFfgxw4ZuWBaG/xVIns=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <!-- 86400s = once a day. User-adjustable via Sparkle's built-in prefs. -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>

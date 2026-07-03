@@ -18,7 +18,7 @@ struct MillfolioApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(client: client, bootstrapper: appDelegate.bootstrapper, appDelegate: appDelegate)
+            MenuContent(client: client, bootstrapper: appDelegate.bootstrapper, updater: appDelegate.updater, appDelegate: appDelegate)
         } label: {
             Image(nsImage: client.status == .online ? MenuBarIcon.active : MenuBarIcon.inactive)
         }
@@ -29,6 +29,7 @@ struct MillfolioApp: App {
 struct MenuContent: View {
     @ObservedObject var client: MillfolioClient
     @ObservedObject var bootstrapper: Bootstrapper
+    @ObservedObject var updater: UpdaterController
     let appDelegate: AppDelegate
 
     private let repoURL = "https://github.com/millfolio/vault"
@@ -57,6 +58,12 @@ struct MenuContent: View {
         if bootstrapper.hasLog {
             Button("Open Log") { bootstrapper.openLog() }
         }
+
+        Divider()
+
+        // Sparkle auto-update: user-initiated check (also runs on a schedule).
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
 
         Divider()
 

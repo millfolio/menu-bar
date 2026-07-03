@@ -28,20 +28,71 @@ BIN="$ROOT/menu/.build/release/${APP_NAME}"
 APP="$OUT/${APP_NAME}.app"
 echo "==> Assembling ${APP} ..." >&2
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/${APP_NAME}"
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
 # App icon (tracked; regenerate with `swift make_icon.swift`). Info.plist's
 # CFBundleIconFile points at it.
 [[ -f "$HERE/${APP_NAME}.icns" ]] && cp "$HERE/${APP_NAME}.icns" "$APP/Contents/Resources/${APP_NAME}.icns"
 
+# Stamp the release version into the app's Info.plist so Sparkle can compare the
+# running app against the appcast. $MILLFOLIO_VERSION comes from the release tag
+# (make_pkg.sh forwards it); when unset the plist's committed default is kept.
+if [[ -n "${MILLFOLIO_VERSION:-}" ]]; then
+    echo "==> Stamping version ${MILLFOLIO_VERSION} into Info.plist" >&2
+    PB=/usr/libexec/PlistBuddy
+    "$PB" -c "Set :CFBundleShortVersionString ${MILLFOLIO_VERSION}" "$APP/Contents/Info.plist"
+    "$PB" -c "Set :CFBundleVersion ${MILLFOLIO_VERSION}" "$APP/Contents/Info.plist"
+fi
+
+# --- Sparkle: embed the framework so auto-update works from an installed app. ---
+# Sparkle ships (via SPM) as a binary Sparkle.framework containing the updater
+# dylib PLUS helper code (Autoupdate, Updater.app, Downloader.xpc, Installer.xpc).
+# SwiftPM links it as @rpath/Sparkle.framework but does NOT embed it in our
+# hand-assembled .app, so we copy it into Contents/Frameworks and add the matching
+# rpath. (SwiftPM already stages a copy next to the built binary.)
+FW_SRC="$(dirname "$BIN")/Sparkle.framework"
+if [[ -d "$FW_SRC" ]]; then
+    echo "==> Embedding Sparkle.framework" >&2
+    # -R preserves the Versions/Current symlink layout a framework needs.
+    cp -R "$FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+    # The binary's baked-in rpaths don't include the standard app Frameworks dir.
+    install_name_tool -add_rpath "@executable_path/../Frameworks" \
+        "$APP/Contents/MacOS/${APP_NAME}" 2>/dev/null || true
+else
+    echo "warning: Sparkle.framework not found next to $BIN — auto-update will not work" >&2
+fi
+
+FW="$APP/Contents/Frameworks/Sparkle.framework"
 SIGN_ID="${MILLFOLIO_SIGN_IDENTITY:--}"
+
+# Sign everything inside-out. Nested Sparkle code (XPC services, the Autoupdate
+# helper, Updater.app) must be signed BEFORE the framework, which is signed before
+# the app — and the app last (its signature seals the embedded framework). Adding
+# the rpath above invalidated the app binary's signature, so a re-sign is required
+# regardless. For Developer ID we use the hardened runtime + a secure timestamp
+# (required for notarization); locally we ad-hoc sign so the app runs.
 if [[ "$SIGN_ID" == "-" ]]; then
     echo "==> Ad-hoc signing (set MILLFOLIO_SIGN_IDENTITY for a notarizable build)" >&2
-    codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "    (codesign skipped)" >&2
+    RUNTIME=(); SIGN=(-)
 else
     echo "==> Signing with Developer ID: ${SIGN_ID}" >&2
-    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP" >&2
+    RUNTIME=(--options runtime --timestamp); SIGN=("$SIGN_ID")
 fi
+
+# ${RUNTIME[@]+...} guards the empty-array case under `set -u` on bash 3.2 (macOS).
+sign() { codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "${SIGN[@]}" "$1" >&2; }
+
+if [[ -d "$FW" ]]; then
+    for item in \
+        "$FW/Versions/B/XPCServices/Downloader.xpc" \
+        "$FW/Versions/B/XPCServices/Installer.xpc" \
+        "$FW/Versions/B/Autoupdate" \
+        "$FW/Versions/B/Updater.app"; do
+        [[ -e "$item" ]] && sign "$item"
+    done
+    sign "$FW"
+fi
+sign "$APP"
 
 echo "$APP"

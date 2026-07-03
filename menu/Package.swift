@@ -6,6 +6,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        // Sparkle auto-update framework (Developer-ID / non-App-Store apps). Only the
+        // menu-bar `Millfolio` app links it; the CLI does not.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4"),
     ],
     targets: [
         // Vendored zstd decompressor (decoder-only amalgamation), statically
@@ -27,7 +30,10 @@ let package = Package(
         // Millfolio.app — see installer/bundle.sh, which hardcodes that name).
         .executableTarget(
             name: "Millfolio",
-            dependencies: ["MillfolioCore"],
+            dependencies: [
+                "MillfolioCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/Millfolio"
         ),
         // The `millfolio` CLI. Target/binary is `millfolio-cli` to avoid colliding
