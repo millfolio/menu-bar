@@ -20,9 +20,28 @@
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
-    <!-- Menu-bar agent: no Dock icon, no main window. -->
+    <!-- Launches as a menu-bar agent (no Dock icon); the app promotes itself to a
+         regular, Dock-visible app at runtime while its main window is on screen. -->
     <key>LSUIElement</key>
     <true/>
+    <!-- The main window is a WKWebView onto the local web UI at http://localhost:10000
+         (HTTP + a same-origin WebSocket). WKWebView blocks cleartext HTTP by default,
+         so allow loopback / .local networking. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>localhost</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
     <key>NSHumanReadableCopyright</key>
     <string>millfolio</string>
 </dict>

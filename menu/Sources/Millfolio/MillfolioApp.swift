@@ -8,12 +8,16 @@ import MillfolioCore
 /// open opencode against it.
 @main
 struct MillfolioApp: App {
+    // The AppKit delegate owns the native WKWebView main window + the app menu,
+    // and manages the activation policy (menu-bar agent ⇄ Dock-visible window).
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @StateObject private var client = MillfolioClient()
     @StateObject private var bootstrapper = Bootstrapper()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(client: client, bootstrapper: bootstrapper)
+            MenuContent(client: client, bootstrapper: bootstrapper, appDelegate: appDelegate)
         } label: {
             Image(nsImage: client.status == .online ? MenuBarIcon.active : MenuBarIcon.inactive)
         }
@@ -24,6 +28,7 @@ struct MillfolioApp: App {
 struct MenuContent: View {
     @ObservedObject var client: MillfolioClient
     @ObservedObject var bootstrapper: Bootstrapper
+    let appDelegate: AppDelegate
 
     private let engineRepoURL = "https://github.com/millfolio/engine"
 
@@ -37,16 +42,17 @@ struct MenuContent: View {
 
         Divider()
 
+        // Bring the native millfolio window (the local web UI) to the front.
+        Button("Open millfolio") { appDelegate.showMainWindow() }
+            .keyboardShortcut("o")
+
+        Divider()
+
         engineActions
 
         Divider()
 
         Button("Refresh") { client.refresh(); bootstrapper.refreshServerRunning() }
-        if client.status == .online {
-            Button("Open server in browser") {
-                if let url = URL(string: client.baseURL) { NSWorkspace.shared.open(url) }
-            }
-        }
         if bootstrapper.hasLog {
             Button("Open Log") { bootstrapper.openLog() }
         }
