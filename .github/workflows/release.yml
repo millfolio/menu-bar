@@ -181,11 +181,15 @@ jobs:
           if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
             echo "::error::SPARKLE_PRIVATE_KEY secret is not set — cannot sign the Sparkle update/appcast"; exit 1
           fi
+          # The enclosure is hosted on millfolio.app (public), NOT the GitHub release
+          # asset — this repo is PRIVATE, so a GitHub `releases/download/` URL 404s for
+          # Sparkle's anonymous fetch. The zip is committed to the website's public/ dir
+          # below, alongside appcast.xml, so both are served from the same public origin.
           GEN="menu/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
           SRC="$RUNNER_TEMP/appcast"; mkdir -p "$SRC"; cp "$ZIP" "$SRC/"
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GEN" \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            --download-url-prefix "https://millfolio.app/" \
             --link "https://millfolio.app" \
             -o "$SRC/appcast.xml" \
             "$SRC"
@@ -245,13 +249,19 @@ jobs:
           token: ${{ secrets.WEBSITE_PUSH_TOKEN }}
           path: website-pub
 
-      - name: Publish appcast to millfolio.app
+      - name: Publish appcast + update zip to millfolio.app
         if: startsWith(github.ref, 'refs/tags/') && env.APPLE_ID != '' && env.WEBSITE_PUSH_TOKEN != ''
         run: |
-          cp "$GITHUB_WORKSPACE/appcast.xml" website-pub/public/appcast.xml
+          # Host BOTH the appcast and the Sparkle update zip on the public website
+          # (Cloudflare Git connector auto-deploys). The zip must be public because
+          # this repo is private. Keep only the current version's zip so the repo
+          # doesn't accrue a binary per release — Sparkle only needs the latest.
+          rm -f website-pub/public/Millfolio-*.zip
+          cp "$GITHUB_WORKSPACE/appcast.xml"      website-pub/public/appcast.xml
+          cp "$GITHUB_WORKSPACE/Millfolio-$VER.zip" website-pub/public/
           cd website-pub
           git config user.name "millfolio-ci"
           git config user.email "ci@millfolio.app"
-          git add public/appcast.xml
-          git commit -m "appcast: Millfolio ${VER}" || { echo "no appcast change"; exit 0; }
+          git add -A public/appcast.xml public/Millfolio-*.zip
+          git commit -m "appcast: Millfolio ${VER}" || { echo "no change"; exit 0; }
           git push
