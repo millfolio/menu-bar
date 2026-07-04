@@ -136,8 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// launches (autosave), enforces a sensible minimum for the chat UI, and hosts a
 /// `WebController` that manages loading/readiness.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let web = WebController(startURL: WebApp.url, pollsForReady: true)
+    private static let reloadItemID = NSToolbarItem.Identifier("Reload")
+    private var keyMonitor: Any?
 
     init() {
         let window = NSWindow(
@@ -159,11 +161,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if window.setFrameUsingName("MillfolioMainWindow") == false {
             window.center()
         }
+        // A visible Reload button + a Cmd-R monitor. The AppKit main menu is
+        // unreliable in a MenuBarExtra/LSUIElement app, so refresh must not depend on it.
+        let toolbar = NSToolbar(identifier: "MillfolioMainToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
+            guard let self, let window, window.isKeyWindow,
+                event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                event.charactersIgnoringModifiers?.lowercased() == "r"
+            else { return event }
+            self.web.reload()
+            return nil   // consume ⌘R
+        }
+
         web.start()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func reloadTapped(_ sender: Any?) { web.reload() }
+
+    // MARK: NSToolbarDelegate — a single Reload button (menu-independent refresh).
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard id == Self.reloadItemID else { return nil }
+        let item = NSToolbarItem(itemIdentifier: id)
+        item.label = "Reload"
+        item.toolTip = "Reload the page (⌘R)"
+        item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
+        item.isBordered = true
+        item.target = self
+        item.action = #selector(reloadTapped(_:))
+        return item
+    }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.reloadItemID] }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.reloadItemID, .flexibleSpace] }
 
     /// Closing the window returns the app to a menu-bar agent (no Dock icon); the
     /// menu-bar "Open millfolio" item brings it back.
