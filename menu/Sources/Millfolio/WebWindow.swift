@@ -342,6 +342,9 @@ final class WebController: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownl
     ///   * `{ "type": "notify", "title": "…", "body": "…" }` — native notification.
     ///   * `{ "type": "unlockAmounts" }` — run Touch ID, then hand the web UI a
     ///     reveal token (see `handleUnlockAmounts`).
+    ///   * `{ "type": "pickPath", "mode": "folder"|"files" }` — open a native
+    ///     NSOpenPanel and hand the chosen absolute path(s) back to the web UI
+    ///     (`window.__millfolioPickedPath`) so it can POST them to `/api/index`.
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == Self.bridgeName else { return }
         let payload = message.body as? [String: Any] ?? [:]
@@ -352,9 +355,59 @@ final class WebController: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownl
                                 body: (payload["body"] as? String) ?? "")
         case "unlockAmounts":
             handleUnlockAmounts()
+        case "pickPath":
+            handlePickPath(mode: (payload["mode"] as? String) ?? "folder")
         default:
             NSLog("millfolio bridge: unhandled message type \"\(type)\"")
         }
+    }
+
+    // MARK: - Native file/folder picker (Vault/Files indexing)
+
+    /// The web UI asked to pick something to index. Show an `NSOpenPanel` configured
+    /// per `mode` ("folder" → choose a directory; "files" → choose one or more files),
+    /// then hand each chosen ABSOLUTE path back to the web UI via
+    /// `window.__millfolioPickedPath("<path>")` (or `window.__millfolioPickCancelled()`
+    /// on cancel). The app is NOT sandboxed, so it can read any user folder the picker
+    /// returns directly — no security-scoped bookmarks are needed.
+    private func handlePickPath(mode: String) {
+        let panel = NSOpenPanel()
+        let wantFiles = (mode == "files")
+        panel.canChooseDirectories = !wantFiles
+        panel.canChooseFiles = wantFiles
+        panel.allowsMultipleSelection = wantFiles
+        panel.resolvesAliases = true
+        panel.prompt = "Index"
+        panel.message = wantFiles
+            ? "Choose files to index (.csv, .pdf, .md)."
+            : "Choose a folder to index."
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+            guard let self else { return }
+            guard resp == .OK, !panel.urls.isEmpty else {
+                self.pickCancelled()
+                return
+            }
+            // Forward each chosen path; the web UI indexes them (folder mode returns
+            // exactly one directory — the common case wired into the UI today).
+            for url in panel.urls {
+                self.pickedPath(url.path)
+            }
+        }
+        if let window = webView.window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
+    private func pickedPath(_ path: String) {
+        let js = "window.__millfolioPickedPath && window.__millfolioPickedPath(\"\(Self.jsEscape(path))\")"
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    private func pickCancelled() {
+        webView.evaluateJavaScript("window.__millfolioPickCancelled && window.__millfolioPickCancelled()",
+                                   completionHandler: nil)
     }
 
     // MARK: - Touch-ID amount unlock (native LocalAuthentication bridge)
