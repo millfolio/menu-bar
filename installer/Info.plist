@@ -44,6 +44,11 @@
     </dict>
     <key>NSHumanReadableCopyright</key>
     <string>millfolio</string>
+    <!-- LocalAuthentication (Touch ID) is used to unlock on-screen amounts. macOS
+         shows `localizedReason` for the biometric prompt; this key is the required
+         usage string for Face ID and good hygiene for the Touch-ID prompt too. -->
+    <key>NSFaceIDUsageDescription</key>
+    <string>Millfolio uses Touch ID to unlock your on-screen amounts.</string>
     <!-- Sparkle auto-update (Developer-ID / non-App-Store). The appcast is hosted at
          the marketing site root; each update item is an EdDSA-signed, zipped
          Millfolio.app verified against SUPublicEDKey. The matching PRIVATE key lives

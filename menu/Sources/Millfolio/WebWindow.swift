@@ -1,4 +1,5 @@
 import AppKit
+import LocalAuthentication
 import WebKit
 
 /// The native main window: a `WKWebView` hosting the local millfolio web UI
@@ -337,9 +338,10 @@ final class WebController: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownl
     // MARK: WKScriptMessageHandler — native-notification bridge
 
     /// Handles `window.webkit.messageHandlers.millfolio.postMessage(payload)`.
-    /// Payload shape (all optional): `{ "type": "notify", "title": "…", "body": "…" }`.
-    /// Wired now so the web UI can fire native notifications later (e.g. backfill
-    /// done) without another native change.
+    /// Payload shapes:
+    ///   * `{ "type": "notify", "title": "…", "body": "…" }` — native notification.
+    ///   * `{ "type": "unlockAmounts" }` — run Touch ID, then hand the web UI a
+    ///     reveal token (see `handleUnlockAmounts`).
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == Self.bridgeName else { return }
         let payload = message.body as? [String: Any] ?? [:]
@@ -348,9 +350,114 @@ final class WebController: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownl
         case "notify":
             NativeNotifier.post(title: (payload["title"] as? String) ?? "millfolio",
                                 body: (payload["body"] as? String) ?? "")
+        case "unlockAmounts":
+            handleUnlockAmounts()
         default:
             NSLog("millfolio bridge: unhandled message type \"\(type)\"")
         }
+    }
+
+    // MARK: - Touch-ID amount unlock (native LocalAuthentication bridge)
+
+    /// The on-device data dir holding `.reveal-secret` — mirrors the app-server's
+    /// `_config_dir()`: `$MILLFOLIO_DATA_DIR` (if set) else
+    /// `~/Library/Application Support/Millfolio/data`.
+    private func revealSecretURL() -> URL {
+        let env = ProcessInfo.processInfo.environment
+        if let d = env["MILLFOLIO_DATA_DIR"],
+           !d.trimmingCharacters(in: .whitespaces).isEmpty {
+            return URL(fileURLWithPath: d).appendingPathComponent(".reveal-secret")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Millfolio/data", isDirectory: true)
+            .appendingPathComponent(".reveal-secret")
+    }
+
+    /// The web UI asked to unlock amounts via Touch ID. Run LocalAuthentication
+    /// with `.deviceOwnerAuthentication` — Touch ID / Apple Watch, FALLING BACK to
+    /// the Mac login password (NOT `.withBiometrics`), so it also works on a Mac
+    /// mini with no biometric sensor. On success, exchange the local secret for a
+    /// reveal token; on cancel/failure, call the web's failure callback so it can
+    /// offer the passphrase instead.
+    private func handleUnlockAmounts() {
+        let context = LAContext()
+        context.localizedCancelTitle = "Cancel"
+        var authError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
+            revealFailed(authError?.localizedDescription ?? "Authentication isn't available on this Mac.")
+            return
+        }
+        context.evaluatePolicy(.deviceOwnerAuthentication,
+                               localizedReason: "Unlock your amounts") { [weak self] success, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if success {
+                    self.exchangeSecretForToken()
+                } else {
+                    self.revealFailed(error?.localizedDescription ?? "Touch ID was cancelled.")
+                }
+            }
+        }
+    }
+
+    /// Read the local-capability secret and POST it to `/api/amounts/unlock-local`,
+    /// which mints the SAME reveal token the passphrase path mints. On success,
+    /// hand the token to the web UI via `window.__millfolioReveal(token)`.
+    private func exchangeSecretForToken() {
+        guard let raw = try? String(contentsOf: revealSecretURL(), encoding: .utf8) else {
+            revealFailed("Couldn't read the local unlock secret. Is millfolio running?")
+            return
+        }
+        let secret = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if secret.isEmpty {
+            revealFailed("The local unlock secret is empty.")
+            return
+        }
+        var req = URLRequest(url: WebApp.url.appendingPathComponent("api/amounts/unlock-local"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(secret, forHTTPHeaderField: "X-Millfolio-Reveal-Secret")
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard error == nil,
+                      let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      let data,
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let token = obj["token"] as? String, !token.isEmpty else {
+                    self.revealFailed("The local server didn't return a token.")
+                    return
+                }
+                self.revealSucceeded(token)
+            }
+        }.resume()
+    }
+
+    private func revealSucceeded(_ token: String) {
+        let js = "window.__millfolioReveal && window.__millfolioReveal(\"\(Self.jsEscape(token))\")"
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    private func revealFailed(_ message: String) {
+        let js = "window.__millfolioRevealFailed && window.__millfolioRevealFailed(\"\(Self.jsEscape(message))\")"
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// Minimal JS string-literal escaping for values injected into
+    /// `evaluateJavaScript` (the token is server-minted hex, but escape defensively).
+    private static func jsEscape(_ s: String) -> String {
+        var out = ""
+        for ch in s.unicodeScalars {
+            switch ch {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            default: out.unicodeScalars.append(ch)
+            }
+        }
+        return out
     }
 }
 
