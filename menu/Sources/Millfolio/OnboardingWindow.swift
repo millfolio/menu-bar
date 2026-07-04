@@ -116,8 +116,8 @@ final class OnboardingViewController: NSViewController {
         bodyLabel.font = .systemFont(ofSize: 13)
         bodyLabel.textColor = .secondaryLabelColor
         bodyLabel.alignment = .center
-        bodyLabel.maximumNumberOfLines = 5
-        bodyLabel.preferredMaxLayoutWidth = 460
+        bodyLabel.maximumNumberOfLines = 0        // never truncate — height follows the text
+        bodyLabel.preferredMaxLayoutWidth = 480   // matches the pinned stack width below
 
         spinner.style = .spinning
         spinner.controlSize = .regular
@@ -131,7 +131,7 @@ final class OnboardingViewController: NSViewController {
         statusLabel.alignment = .center
         statusLabel.maximumNumberOfLines = 3
         statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.preferredMaxLayoutWidth = 460
+        statusLabel.preferredMaxLayoutWidth = 480
         (statusLabel.cell as? NSTextFieldCell)?.wraps = true
 
         detailsToggle.title = "Show details"
@@ -190,10 +190,19 @@ final class OnboardingViewController: NSViewController {
         stack.setCustomSpacing(20, after: statusLabel)
         root.addSubview(stack)
         NSLayoutConstraint.activate([
+            // Fixed content width so the window doesn't resize as each state's text
+            // changes length (480 + 40+40 padding = a stable 560-pt window).
+            stack.widthAnchor.constraint(equalToConstant: 480),
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 40),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -40),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 36),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -28),
+            // Pin the wrapping text labels to the full stack width (centerX alignment
+            // otherwise leaves them at intrinsic width → narrow wrap + truncation).
+            bodyLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            bodyLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             detailsScroll.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             detailsScroll.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
         ])

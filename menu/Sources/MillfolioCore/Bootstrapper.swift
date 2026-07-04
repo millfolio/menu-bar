@@ -195,8 +195,19 @@ public final class Bootstrapper: ObservableObject {
     // its bundle move atomically AND a dev (pre-release) CLI fetches the dev bundle —
     // GitHub's /releases/latest skips pre-releases, so /latest/ would hand a dev CLI
     // the last PROD bundle. A source build with no Homebrew tag falls back to /latest/.
+    /// The standalone `.app` (set by the menu-bar app) is NOT the versioned `mill`
+    /// CLI, so it must NOT inherit whatever `mill` version happens to be brew-installed
+    /// (that gave the app the old v0.4.36 bundle → "missing vault.mojoc"). When set, the
+    /// app pins to the latest PROD release instead — its own cadence, always a current
+    /// bundle format.
+    public var forceLatestBundle = false
+
+    /// The bundle version to pin to: the installed CLI's release, or "" (→ /latest/)
+    /// for the standalone app or an unmanaged build.
+    private func bundleVersion() -> String { forceLatestBundle ? "" : brewCliVersion() }
+
     private var bundleURL: URL {
-        let v = brewCliVersion()  // e.g. "v0.4.36" (prod) or "v0.4.37-rc.1" (dev), "" if unmanaged
+        let v = bundleVersion()  // "v0.4.39" (CLI pin) or "" (app/unmanaged → /latest/)
         if !v.isEmpty {
             return URL(string: "https://github.com/millfolio/vault/releases/download/\(v)/millfolio.zip")!
         }
@@ -770,7 +781,7 @@ public final class Bootstrapper: ObservableObject {
         // though its content is still "present" — re-fetch instead of forcing the user to
         // delete it by hand. Empty (non-brew install) → fall back to content-only so we
         // don't loop re-downloading with no version signal.
-        let want = brewCliVersion()
+        let want = bundleVersion()  // "" for the app → /latest/, content-only staleness
         let have = (try? String(contentsOf: stampURL, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if contentPresent && (want.isEmpty || have == want) { return }

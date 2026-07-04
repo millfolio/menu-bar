@@ -22,7 +22,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// onboarding window, and the launch-time provisioned check all observe it). It
     /// installs into the shared ~/Library/Application Support/Millfolio tree the
     /// `mill` CLI uses, so both interoperate on one set of launchd agents.
-    let bootstrapper = Bootstrapper()
+    let bootstrapper: Bootstrapper = {
+        let b = Bootstrapper()
+        // The app has its own release cadence and must NOT provision whatever `mill`
+        // version is brew-installed (that fetched the stale v0.4.36 bundle → missing
+        // vault.mojoc). Always pin to the latest PROD bundle instead.
+        b.forceLatestBundle = true
+        return b
+    }()
 
     /// Owns Sparkle's updater controller (auto-update). Started automatically; the
     /// menu's "Check for Updates…" items drive it. See Updater.swift.
