@@ -262,6 +262,9 @@ jobs:
           cd website-pub
           git config user.name "millfolio-ci"
           git config user.email "ci@millfolio.app"
-          git add -A public/appcast.xml public/Millfolio-*.zip
+          # `git add -A public/` (not a Millfolio-*.zip glob) so the rm'd OLD zip's
+          # DELETION is staged too — a glob only matches the surviving new zip, which
+          # would leave every prior release's binary in the repo forever.
+          git add -A public/
           git commit -m "appcast: Millfolio ${VER}" || { echo "no change"; exit 0; }
           git push
