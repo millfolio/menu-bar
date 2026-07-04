@@ -2,66 +2,52 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>Millfolio</string>
-    <key>CFBundleDisplayName</key>
-    <string>Millfolio</string>
-    <key>CFBundleIdentifier</key>
-    <string>me.millfolio.app</string>
-    <key>CFBundleVersion</key>
-    <string>0.1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>CFBundleExecutable</key>
-    <string>Millfolio</string>
-    <key>CFBundleIconFile</key>
-    <string>Millfolio</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <!-- Launches as a menu-bar agent (no Dock icon); the app promotes itself to a
-         regular, Dock-visible app at runtime while its main window is on screen. -->
-    <key>LSUIElement</key>
-    <true/>
-    <!-- The main window is a WKWebView onto the local web UI at http://localhost:10000
-         (HTTP + a same-origin WebSocket). WKWebView blocks cleartext HTTP by default,
-         so allow loopback / .local networking. -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-        <key>NSExceptionDomains</key>
-        <dict>
-            <key>localhost</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-                <key>NSIncludesSubdomains</key>
-                <true/>
-            </dict>
-        </dict>
-    </dict>
-    <key>NSHumanReadableCopyright</key>
-    <string>millfolio</string>
-    <!-- LocalAuthentication (Touch ID) is used to unlock on-screen amounts. macOS
-         shows `localizedReason` for the biometric prompt; this key is the required
-         usage string for Face ID and good hygiene for the Touch-ID prompt too. -->
-    <key>NSFaceIDUsageDescription</key>
-    <string>Millfolio uses Touch ID to unlock your on-screen amounts.</string>
-    <!-- Sparkle auto-update (Developer-ID / non-App-Store). The appcast is hosted at
-         the marketing site root; each update item is an EdDSA-signed, zipped
-         Millfolio.app verified against SUPublicEDKey. The matching PRIVATE key lives
-         in a developer login keychain (and CI's SPARKLE_PRIVATE_KEY secret) — see
-         SPARKLE.md. -->
-    <key>SUFeedURL</key>
-    <string>https://millfolio.app/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>UugYFpDtw08kzTIocCokisDnrFfgxw4ZuWBaG/xVIns=</string>
-    <key>SUEnableAutomaticChecks</key>
-    <true/>
-    <!-- 86400s = once a day. User-adjustable via Sparkle's built-in prefs. -->
-    <key>SUScheduledCheckInterval</key>
-    <integer>86400</integer>
+	<key>CFBundleDisplayName</key>
+	<string>Millfolio</string>
+	<key>CFBundleExecutable</key>
+	<string>Millfolio</string>
+	<key>CFBundleIconFile</key>
+	<string>Millfolio</string>
+	<key>CFBundleIdentifier</key>
+	<string>me.millfolio.app</string>
+	<key>CFBundleName</key>
+	<string>Millfolio</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Millfolio uses Touch ID to unlock your on-screen amounts.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>millfolio</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://millfolio.app/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>wL6M/n+tUPL+bogQgL7DDhJ/Of8lfmAu/mLtMSPiyo8=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
