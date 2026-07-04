@@ -81,7 +81,20 @@ else
 fi
 
 # ${RUNTIME[@]+...} guards the empty-array case under `set -u` on bash 3.2 (macOS).
-sign() { codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "${SIGN[@]}" "$1" >&2; }
+# Retry a few times: `--timestamp` hits Apple's timestamp server, which flakes with
+# "The timestamp service is not available" — a transient outage, not a signing error.
+sign() {
+    local i
+    for i in 1 2 3 4 5; do
+        if codesign --force ${RUNTIME[@]+"${RUNTIME[@]}"} --sign "${SIGN[@]}" "$1" >&2; then
+            return 0
+        fi
+        echo "==> codesign of '$1' failed (attempt $i) — retrying in ${i}0s (timestamp service may be flaky)" >&2
+        sleep "${i}0"
+    done
+    echo "==> codesign of '$1' failed after 5 attempts" >&2
+    return 1
+}
 
 if [[ -d "$FW" ]]; then
     for item in \
