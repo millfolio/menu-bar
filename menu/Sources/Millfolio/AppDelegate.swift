@@ -49,14 +49,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Cmd-C/V/Q/R and the window commands work once we show a window.
         NSApp.mainMenu = MenuBuilder.build()
         // First-run routing: onboard if the runtime isn't provisioned yet, else go
-        // straight to the web window (the existing flow).
-        routeInitialWindow()
+        // straight to the web window (the existing flow). On launch we also START the
+        // servers when already provisioned — `mill install` provisions but doesn't
+        // start, so a provisioned launch would otherwise sit on "Waiting for local
+        // server". (Not on reopen — the servers are already up by then.)
+        routeInitialWindow(startServers: true)
     }
 
-    /// Show onboarding on first run, otherwise the main web window.
-    private func routeInitialWindow() {
+    /// Show onboarding on first run, otherwise the main web window. When `startServers`
+    /// (launch only), bring the local servers up for the already-provisioned case.
+    private func routeInitialWindow(startServers: Bool = false) {
         if bootstrapper.isProvisioned {
             showMainWindow()
+            if startServers {
+                // Idempotent: no-ops if :8000/:10000 are already serving. openBrowser:false
+                // — the WebWindow renders :10000; its poll overlay covers the startup wait.
+                bootstrapper.startVaultChatFireAndForget(openBrowser: false)
+            }
         } else {
             showOnboarding()
         }

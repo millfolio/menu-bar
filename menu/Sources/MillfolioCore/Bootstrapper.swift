@@ -1798,10 +1798,12 @@ public final class Bootstrapper: ObservableObject {
     }
 
     /// Menu-app entry point: open the vault chat (fire-and-forget).
-    public func startVaultChatFireAndForget() {
+    /// `openBrowser` defaults true (CLI behavior). The menu-bar app passes false — it
+    /// renders :10000 in its own WKWebView and must not also spawn the system browser.
+    public func startVaultChatFireAndForget(openBrowser: Bool = true) {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            do { try await self.startVaultChat(vaultDir: self.vaultDir()) }
+            do { try await self.startVaultChat(vaultDir: self.vaultDir(), openBrowser: openBrowser) }
             catch { await self.set(failed: "vault chat: \(humanError(error))") }
         }
     }
