@@ -62,9 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if bootstrapper.isProvisioned {
             showMainWindow()
             if startServers {
-                // Idempotent: no-ops if :8000/:10000 are already serving. openBrowser:false
-                // — the WebWindow renders :10000; its poll overlay covers the startup wait.
-                bootstrapper.startVaultChatFireAndForget(openBrowser: false)
+                // On launch, ALSO check whether a newer PROD bundle has shipped and, if
+                // so, re-provision against it BEFORE starting the servers — the app has no
+                // Homebrew `mill update` path, so this is how it picks up features shipped
+                // on the prod bundle line. Background + idempotent: up-to-date or offline
+                // → just starts :8000/:10000 (no-ops if already serving). openBrowser:false
+                // — the WebWindow renders :10000; its poll overlay covers the (possibly
+                // couple-minute) refresh + startup wait, and refresh progress streams via
+                // the shared Bootstrapper's phase (the menu-bar status line).
+                bootstrapper.refreshBundleThenStartFireAndForget(openBrowser: false)
             }
         } else {
             showOnboarding()
@@ -139,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let web = WebController(startURL: WebApp.url, pollsForReady: true)
     private static let reloadItemID = NSToolbarItem.Identifier("Reload")
+    private static let updatesItemID = NSToolbarItem.Identifier("CheckForUpdates")
     private var keyMonitor: Any?
 
     init() {
@@ -183,22 +190,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func reloadTapped(_ sender: Any?) { web.reload() }
+    @objc private func checkUpdatesTapped(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.checkForUpdates(sender)
+    }
 
-    // MARK: NSToolbarDelegate — a single Reload button (menu-independent refresh).
+    // MARK: NSToolbarDelegate — Reload + Check for Updates (menu-independent, since the
+    // AppKit main menu is unreliable in a MenuBarExtra/LSUIElement app).
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        guard id == Self.reloadItemID else { return nil }
-        let item = NSToolbarItem(itemIdentifier: id)
-        item.label = "Reload"
-        item.toolTip = "Reload the page (⌘R)"
-        item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
-        item.isBordered = true
-        item.target = self
-        item.action = #selector(reloadTapped(_:))
-        return item
+        if id == Self.reloadItemID {
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Reload"
+            item.toolTip = "Reload the page (⌘R)"
+            item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
+            item.isBordered = true
+            item.target = self
+            item.action = #selector(reloadTapped(_:))
+            return item
+        }
+        if id == Self.updatesItemID {
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Check for Updates"
+            item.toolTip = "Check for Updates…"
+            item.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Check for Updates")
+            item.isBordered = true
+            item.target = self
+            item.action = #selector(checkUpdatesTapped(_:))
+            return item
+        }
+        return nil
     }
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.reloadItemID] }
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.reloadItemID, .flexibleSpace] }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.reloadItemID, .flexibleSpace, Self.updatesItemID]
+    }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.reloadItemID, Self.updatesItemID, .flexibleSpace]
+    }
 
     /// Closing the window returns the app to a menu-bar agent (no Dock icon); the
     /// menu-bar "Open millfolio" item brings it back.

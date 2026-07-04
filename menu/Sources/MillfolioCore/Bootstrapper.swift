@@ -202,16 +202,80 @@ public final class Bootstrapper: ObservableObject {
     /// bundle format.
     public var forceLatestBundle = false
 
-    /// The bundle version to pin to: the installed CLI's release, or "" (→ /latest/)
-    /// for the standalone app or an unmanaged build.
-    private func bundleVersion() -> String { forceLatestBundle ? "" : brewCliVersion() }
+    /// For the standalone app (`forceLatestBundle`), the latest PROD release tag —
+    /// resolved from GitHub's `/releases/latest` redirect (see `resolveProdLatestVersion`)
+    /// and cached for the lifetime of this Bootstrapper. Empty until resolved, and left
+    /// empty when resolution fails (offline) so the staleness check degrades to
+    /// content-only (we never wipe a present bundle on a failed lookup). The CLI path
+    /// ignores this — it pins to its Homebrew tag.
+    private var resolvedProdLatest = ""
+
+    /// The bundle version to pin to: the installed CLI's release (CLI), the resolved
+    /// latest PROD tag (the standalone app, once `resolveProdLatestVersion` has run), or
+    /// "" for an unmanaged build / the app before a successful prod-latest lookup.
+    /// Empty → the staleness check in `ensureBundle` degrades to content-only.
+    private func bundleVersion() -> String { forceLatestBundle ? resolvedProdLatest : brewCliVersion() }
 
     private var bundleURL: URL {
-        let v = bundleVersion()  // "v0.4.39" (CLI pin) or "" (app/unmanaged → /latest/)
+        // The standalone app always tracks the latest PROD release, so it fetches from
+        // `/releases/latest/` (which serves the resolved prod-latest version's asset) —
+        // NOT the versioned path. Keeping it at /latest/ means the URL is correct even
+        // before `resolvedProdLatest` is known, and if a newer release is cut mid-run the
+        // bundle sha256 check fails closed rather than installing a mismatched asset.
+        if forceLatestBundle {
+            return URL(string: "https://github.com/millfolio/vault/releases/latest/download/millfolio.zip")!
+        }
+        let v = bundleVersion()  // "v0.4.39" (CLI pin) or "" (unmanaged → /latest/)
         if !v.isEmpty {
             return URL(string: "https://github.com/millfolio/vault/releases/download/\(v)/millfolio.zip")!
         }
         return URL(string: "https://github.com/millfolio/vault/releases/latest/download/millfolio.zip")!
+    }
+
+    // ── prod-latest resolution (standalone app) ──────────────────────────────────
+    /// Resolve the latest PROD release tag for `millfolio/vault` WITHOUT a Homebrew
+    /// install or an API token: issue a `HEAD` to `…/releases/latest` and read the
+    /// redirect's `Location`, which GitHub points at `…/releases/tag/vX.Y.Z` (the
+    /// current latest NON-prerelease). Returns the tag (e.g. "v0.4.40"), or nil when the
+    /// lookup fails (offline, DNS, an unexpected redirect target). Never throws —
+    /// callers treat nil as "couldn't check" and keep the installed bundle. The redirect
+    /// is deliberately preferred over the `releases/latest` API, which rate-limits
+    /// unauthenticated requests.
+    private func resolveProdLatestVersion() async -> String? {
+        guard let url = URL(string:
+            "https://github.com/millfolio/vault/releases/latest") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 8
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let catcher = RedirectCatcher()   // capture the Location, don't follow it
+        guard let (_, resp) = try? await URLSession.shared.data(for: req, delegate: catcher),
+              let http = resp as? HTTPURLResponse else { return nil }
+        // With the redirect suppressed we see the 3xx and its Location. If a cache/proxy
+        // instead handed us the followed 200, fall back to the response's final URL —
+        // both end in `…/releases/tag/vX.Y.Z`.
+        let target = http.value(forHTTPHeaderField: "Location") ?? http.url?.absoluteString
+        guard let target, let tag = Self.releaseTag(fromReleasesURL: target) else { return nil }
+        return tag
+    }
+
+    /// Pull `vX.Y.Z` out of a `…/releases/tag/vX.Y.Z` URL (GitHub's latest-redirect
+    /// target). Validates the shape so a garbage redirect can't poison the pin.
+    private static func releaseTag(fromReleasesURL s: String) -> String? {
+        let path = URLComponents(string: s)?.path ?? s
+        guard let last = path.split(separator: "/").last.map(String.init),
+              isReleaseTag(last) else { return nil }
+        return last
+    }
+
+    /// A plausible release tag: `v` + a digit, then digits / dots / dashes / letters
+    /// (dashes+letters cover a `-rc.N` suffix defensively — `/releases/latest` never
+    /// points at a pre-release, but validating loosely is safe and future-proof).
+    private static func isReleaseTag(_ s: String) -> Bool {
+        guard s.hasPrefix("v"), s.count > 1 else { return false }
+        let body = s.dropFirst()
+        guard body.first?.isNumber == true else { return false }
+        return body.allSatisfy { $0.isNumber || $0 == "." || $0 == "-" || $0.isLetter }
     }
     private var bundleRoot: URL { support.appendingPathComponent("bundle", isDirectory: true) }
     private var engineRoot: URL { bundleRoot.appendingPathComponent("runner", isDirectory: true) }
@@ -391,13 +455,20 @@ public final class Bootstrapper: ObservableObject {
     // `.{step}` stamp equals the installed CLI version. Either a missing file or a
     // version bump re-triggers the step. Cheap: a handful of `fileExists` + one read.
 
-    /// The freshness key: the installed `mill` CLI version (so a release bump
-    /// re-runs every step), falling back to the pinned mojo nightly when brew
-    /// can't be queried. Cached — `brewCliVersion()` shells out.
-    private lazy var installVersionKey: String = {
-        let v = brewCliVersion()
-        return v.isEmpty ? Self.mojoVersion : v
-    }()
+    /// Cached Homebrew CLI version — the key below reads it repeatedly during an
+    /// install and `brewCliVersion()` shells out, so resolve it once, lazily.
+    private lazy var cachedBrewCliVersion: String = brewCliVersion()
+
+    /// The freshness key: the installed `mill` CLI version (so a release bump re-runs
+    /// every step), falling back to the pinned mojo nightly when brew can't be queried.
+    /// For the standalone app (which has no Homebrew tag) it's the resolved latest PROD
+    /// tag instead — so a bundle refresh to a newer PROD release actually re-fires every
+    /// per-step guard (a constant mojo-version key would skip the rebuild and leave the
+    /// engine compiled against the OLD source). The CLI path is byte-identical to before.
+    private var installVersionKey: String {
+        if forceLatestBundle, !resolvedProdLatest.isEmpty { return resolvedProdLatest }
+        return cachedBrewCliVersion.isEmpty ? Self.mojoVersion : cachedBrewCliVersion
+    }
 
     /// True when every `files` artifact exists AND the `.{stamp}` step marker
     /// matches the current install version. Pair with `recordStep` after install.
@@ -781,7 +852,15 @@ public final class Bootstrapper: ObservableObject {
         // though its content is still "present" — re-fetch instead of forcing the user to
         // delete it by hand. Empty (non-brew install) → fall back to content-only so we
         // don't loop re-downloading with no version signal.
-        let want = bundleVersion()  // "" for the app → /latest/, content-only staleness
+        // Standalone app: learn the latest PROD tag so `want` is a real version to
+        // compare against the on-disk stamp (the CLI pins to its brew tag instead). A
+        // failed lookup (offline) leaves resolvedProdLatest empty → want stays "" →
+        // content-only staleness below (we never wipe a present bundle on a failed
+        // lookup). Resolve once per Bootstrapper.
+        if forceLatestBundle && resolvedProdLatest.isEmpty {
+            if let tag = await resolveProdLatestVersion() { resolvedProdLatest = tag }
+        }
+        let want = bundleVersion()  // CLI tag, resolved prod-latest (app), or "" (offline/unmanaged) → /latest/
         let have = (try? String(contentsOf: stampURL, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if contentPresent && (want.isEmpty || have == want) { return }
@@ -1808,6 +1887,62 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
+    // ── standalone-app bundle auto-refresh ───────────────────────────────────────
+    /// The bundle version recorded on disk (the `.bundle-version` stamp `ensureBundle`
+    /// writes), or "" when no bundle is unpacked yet.
+    private func installedBundleVersion() -> String {
+        (try? String(contentsOf: bundleRoot.appendingPathComponent(".bundle-version"),
+                     encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// **App only.** If a newer PROD `millfolio.zip` has shipped since this app last
+    /// provisioned, re-provision against it (re-fetch the bundle + rebuild every
+    /// on-device component); otherwise a no-op. The Mojo toolchain (`mojo/`) and the
+    /// model weights (`hf/`) live OUTSIDE `bundleRoot`, so a refresh only re-fetches the
+    /// source bundle and recompiles the on-device engine — weights are preserved.
+    ///
+    /// Offline-safe: when the prod-latest lookup fails we keep the installed bundle
+    /// (never wipe it). Progress streams through `phase`/`onProgress`, so the caller can
+    /// surface it. Runs the SAME `installVault` provision path used on first run.
+    public func refreshBundleIfStale() async throws {
+        guard forceLatestBundle else { return }   // the CLI pins to its brew tag; no-op there
+        guard isProvisioned else { return }       // not provisioned → first-run onboarding handles it
+        guard let latest = await resolveProdLatestVersion() else {
+            set("Couldn't check for a newer millfolio release (offline?) — keeping the installed one.")
+            return
+        }
+        resolvedProdLatest = latest               // pin the freshness key + staleness `want`
+        let have = installedBundleVersion()
+        guard have != latest else { return }      // already current
+        set("Updating millfolio to \(latest)… (this can take a couple of minutes)")
+        // Stop the app server so its binary can be replaced, drop the unpacked bundle so
+        // `ensureBundle` re-fetches, then re-run the full provision. Because
+        // `installVersionKey` now equals the NEW prod tag, every per-step guard re-fires
+        // and rebuilds against the fresh source.
+        _ = stopAppServer()
+        try? FileManager.default.removeItem(at: bundleRoot)
+        try await installVault()
+    }
+
+    /// App-launch entry point (provisioned): refresh the bundle if a newer PROD release
+    /// has shipped, then bring the local servers up — all in the background so the menu
+    /// bar / UI never blocks. Up-to-date or offline → just starts the servers on the
+    /// current bundle. `openBrowser:false` for the menu-bar app (it renders :10000 in
+    /// its own WKWebView). On completion `phase` returns to `.done`.
+    public func refreshBundleThenStartFireAndForget(openBrowser: Bool = false) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.refreshBundleIfStale()
+                try await self.startVaultChat(vaultDir: self.vaultDir(), openBrowser: openBrowser)
+                await self.set(done: true)
+            } catch {
+                await self.set(failed: "startup: \(humanError(error))")
+            }
+        }
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
     @discardableResult
     private func run(_ launch: String, _ args: [String], cwd: URL? = nil, env: [String: String]? = nil) throws -> String {
@@ -2143,4 +2278,17 @@ public enum BootstrapError: Error, CustomStringConvertible {
 func humanError(_ error: Error) -> String {
     if let b = error as? BootstrapError { return b.description }
     return (error as NSError).localizedDescription
+}
+
+/// Captures a single HTTP redirect's `Location` instead of following it — used to read
+/// the tag out of GitHub's `…/releases/latest` → `…/releases/tag/vX.Y.Z` redirect
+/// without an API call. Not `@MainActor`: URLSession invokes it on its own delegate
+/// queue.
+private final class RedirectCatcher: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)   // stop here; we only want the Location header
+    }
 }
