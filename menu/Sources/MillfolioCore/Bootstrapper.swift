@@ -1645,12 +1645,18 @@ public final class Bootstrapper: ObservableObject {
         if FileManager.default.fileExists(atPath: "/etc/ssl/cert.pem") {
             env["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
         }
-        // The release tag (e.g. "v0.4.39-rc.2") this CLI is pinned to — surfaced as
-        // the running version in /api/system + the UI build stamp. Empty for an
-        // unmanaged source build (then the server reports "dev").
-        let cliVersion = brewCliVersion()
-        if !cliVersion.isEmpty {
-            env["MILLFOLIO_VERSION"] = cliVersion
+        // The release version — surfaced as the running version in /api/system + the
+        // UI build stamp. Prefer the version stamped INTO the bundle at build time
+        // (bundleRoot/VERSION, e.g. "0.4.44-rc.4"): correct for the Mac-app install
+        // path (which has no brew, so brewCliVersion() is empty → server showed "dev").
+        // Fall back to the brew CLI version for older bundles lacking the file; leave
+        // unset for an unmanaged source build (then the server reports "dev").
+        let stampedVersion = (try? String(contentsOf: bundleRoot.appendingPathComponent("VERSION"),
+                                          encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let resolvedVersion = stampedVersion.isEmpty ? brewCliVersion() : stampedVersion
+        if !resolvedVersion.isEmpty {
+            env["MILLFOLIO_VERSION"] = resolvedVersion
         }
         // Forward the frontier-model credentials from the invoking shell into the
         // daemon. launchd agents DON'T inherit the login shell, so without this the
