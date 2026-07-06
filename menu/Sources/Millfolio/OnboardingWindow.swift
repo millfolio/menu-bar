@@ -134,10 +134,19 @@ final class OnboardingViewController: NSViewController {
         statusLabel.preferredMaxLayoutWidth = 480
         (statusLabel.cell as? NSTextFieldCell)?.wraps = true
 
+        // A borderless chevron + "Show details" text. (The `.disclosure` bezel style
+        // draws ONLY a bare triangle and drops the title — that lone glyph, centered at
+        // the bottom of the running window, was the stray "$"-looking mark.)
         detailsToggle.title = "Show details"
         detailsToggle.setButtonType(.pushOnPushOff)
-        detailsToggle.bezelStyle = .disclosure
+        detailsToggle.bezelStyle = .inline
+        detailsToggle.isBordered = false
         detailsToggle.imagePosition = .imageLeading
+        detailsToggle.image = NSImage(
+            systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        detailsToggle.imageHugsTitle = true
+        detailsToggle.font = .systemFont(ofSize: 12)
+        detailsToggle.contentTintColor = .secondaryLabelColor
         detailsToggle.target = self
         detailsToggle.action = #selector(toggleDetails)
 
@@ -300,6 +309,9 @@ final class OnboardingViewController: NSViewController {
     @objc private func toggleDetails() {
         detailsScroll.isHidden.toggle()
         detailsToggle.title = detailsScroll.isHidden ? "Show details" : "Hide details"
+        detailsToggle.image = NSImage(
+            systemSymbolName: detailsScroll.isHidden ? "chevron.right" : "chevron.down",
+            accessibilityDescription: nil)
         detailsToggle.state = detailsScroll.isHidden ? .off : .on
     }
 
