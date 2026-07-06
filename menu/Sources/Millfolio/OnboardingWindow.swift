@@ -63,7 +63,11 @@ final class OnboardingWindowController: NSWindowController {
 
 @MainActor
 final class OnboardingViewController: NSViewController {
-    private enum UIState { case intro, running, failed }
+    private enum UIState { case disclaimer, intro, running, failed }
+
+    /// One-time liability/privacy acknowledgment (persisted so returning users never
+    /// see it again). Set to `true` when the user clicks "I understand — continue".
+    private static let disclaimerAckKey = "didAcknowledgeDisclaimer"
 
     private let bootstrapper: Bootstrapper
     private let onComplete: () -> Void
@@ -73,6 +77,10 @@ final class OnboardingViewController: NSViewController {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Welcome to millfolio")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
+
+    // First-run disclaimer — scrollable, read-only body (title is `titleLabel`).
+    private let disclaimerScroll = NSScrollView()
+    private let disclaimerText = NSTextView()
 
     // Progress
     private let spinner = NSProgressIndicator()
@@ -118,6 +126,20 @@ final class OnboardingViewController: NSViewController {
         bodyLabel.alignment = .center
         bodyLabel.maximumNumberOfLines = 0        // never truncate — height follows the text
         bodyLabel.preferredMaxLayoutWidth = 480   // matches the pinned stack width below
+
+        // First-run disclaimer body — read-only, scrollable, left-aligned rich text.
+        disclaimerText.isEditable = false
+        disclaimerText.isSelectable = true
+        disclaimerText.drawsBackground = true
+        disclaimerText.backgroundColor = .textBackgroundColor
+        disclaimerText.textContainerInset = NSSize(width: 10, height: 10)
+        disclaimerText.textStorage?.setAttributedString(Self.disclaimerAttributedString())
+        disclaimerScroll.documentView = disclaimerText
+        disclaimerScroll.hasVerticalScroller = true
+        disclaimerScroll.borderType = .lineBorder
+        disclaimerScroll.translatesAutoresizingMaskIntoConstraints = false
+        disclaimerScroll.isHidden = true
+        disclaimerScroll.heightAnchor.constraint(equalToConstant: 250).isActive = true
 
         spinner.style = .spinning
         spinner.controlSize = .regular
@@ -187,7 +209,7 @@ final class OnboardingViewController: NSViewController {
         secondaryRow.spacing = 10
 
         let stack = NSStackView(views: [
-            iconView, titleLabel, bodyLabel, spinner, statusLabel,
+            iconView, titleLabel, bodyLabel, disclaimerScroll, spinner, statusLabel,
             primaryButton, secondaryRow, detailsToggle, detailsScroll,
         ])
         stack.orientation = .vertical
@@ -214,6 +236,8 @@ final class OnboardingViewController: NSViewController {
             statusLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             detailsScroll.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             detailsScroll.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            disclaimerScroll.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            disclaimerScroll.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
         ])
         self.view = root
     }
@@ -224,14 +248,32 @@ final class OnboardingViewController: NSViewController {
         cancellable = bootstrapper.$phase
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in self?.render(phase: phase) }
-        applyState(.intro)
+        // Show the one-time disclaimer first on a fresh install; returning users who
+        // already acknowledged it skip straight to the normal welcome/provision flow.
+        let acknowledged = UserDefaults.standard.bool(forKey: Self.disclaimerAckKey)
+        applyState(acknowledged ? .intro : .disclaimer)
     }
 
     // MARK: state rendering
 
     private func applyState(_ s: UIState) {
         state = s
+        // Elements that only the disclaimer step shows/hides — reset for every other
+        // state so switching back and forth is clean.
+        iconView.isHidden = (s == .disclaimer)
+        bodyLabel.isHidden = (s == .disclaimer)
+        disclaimerScroll.isHidden = (s != .disclaimer)
         switch s {
+        case .disclaimer:
+            titleLabel.stringValue = "Before you start"
+            spinner.stopAnimation(nil)
+            statusLabel.stringValue = ""
+            statusLabel.isHidden = true
+            primaryButton.title = "I understand — continue"
+            primaryButton.isHidden = false
+            copyButton.isHidden = true
+            openLogButton.isHidden = true
+            detailsToggle.isHidden = true
         case .intro:
             titleLabel.stringValue = "Welcome to millfolio"
             bodyLabel.stringValue =
@@ -300,10 +342,76 @@ final class OnboardingViewController: NSViewController {
     // MARK: actions
 
     @objc private func primaryTapped() {
+        // The disclaimer's "I understand — continue" just records the acknowledgment
+        // (once) and advances to the welcome step — no provisioning yet.
+        if state == .disclaimer {
+            UserDefaults.standard.set(true, forKey: Self.disclaimerAckKey)
+            applyState(.intro)
+            return
+        }
         // Both "Set Up" (intro) and "Retry" (failed) start provisioning.
         statusLabel.textColor = .labelColor
         applyState(.running)
         beginProvisioning()
+    }
+
+    /// The verbatim one-time liability/privacy disclaimer, rendered as 13pt body text
+    /// with hanging-indent bullets so wrapped lines align under the text.
+    private static func disclaimerAttributedString() -> NSAttributedString {
+        let body = NSFont.systemFont(ofSize: 13)
+        let bold = NSFont.systemFont(ofSize: 13, weight: .semibold)
+
+        let intro = NSMutableParagraphStyle()
+        intro.paragraphSpacing = 12
+        intro.lineSpacing = 2
+
+        let bullet = NSMutableParagraphStyle()
+        bullet.lineSpacing = 2
+        bullet.paragraphSpacing = 10
+        bullet.headIndent = 16          // wrapped lines align past the "• "
+        bullet.firstLineHeadIndent = 0
+
+        let out = NSMutableAttributedString()
+        out.append(NSAttributedString(
+            string: "millfolio is a personal project, provided \"as is,\" with no warranty "
+                + "and no liability (see the Apache-2.0 LICENSE). By using it you accept "
+                + "that:\n",
+            attributes: [.font: body, .foregroundColor: NSColor.labelColor,
+                         .paragraphStyle: intro]))
+
+        // Each bullet: a bold lead phrase then the rest, all under a hanging indent.
+        func addBullet(_ lead: String, _ rest: String) {
+            let line = NSMutableAttributedString(
+                string: "•  ",
+                attributes: [.font: body, .foregroundColor: NSColor.labelColor,
+                             .paragraphStyle: bullet])
+            line.append(NSAttributedString(
+                string: lead,
+                attributes: [.font: bold, .foregroundColor: NSColor.labelColor,
+                             .paragraphStyle: bullet]))
+            line.append(NSAttributedString(
+                string: rest + "\n",
+                attributes: [.font: body, .foregroundColor: NSColor.labelColor,
+                             .paragraphStyle: bullet]))
+            out.append(line)
+        }
+
+        addBullet(
+            "Privacy is protected by design, but not guaranteed.",
+            " Your files stay on your device; only an aliased, de-identified schema is "
+                + "sent to the frontier model — never your raw data. But no software is "
+                + "perfectly secure: a bug, the schema that is sent, your own "
+                + "configuration, or the third-party AI provider could expose "
+                + "information. Use it with data you're comfortable putting at some risk.")
+        addBullet(
+            "Answers can be wrong.",
+            " They're generated by an AI writing and running code over your files — "
+                + "don't rely on them for financial, legal, tax, or medical decisions.")
+        addBullet(
+            "You use it at your own risk.",
+            " The author is not liable for any loss, exposure, or decision made using "
+                + "millfolio.")
+        return out
     }
 
     @objc private func toggleDetails() {
