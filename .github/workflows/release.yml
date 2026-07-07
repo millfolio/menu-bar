@@ -241,6 +241,11 @@ jobs:
       # Publish appcast.xml to millfolio.app/appcast.xml (the SUFeedURL) by committing
       # it to the website repo's public/ dir; Cloudflare's Git connector auto-deploys.
       # Needs a PAT with write access to millfolio/website (WEBSITE_PUSH_TOKEN).
+      # NOTE: millfolio/website is a PRIVATE repo — WEBSITE_PUSH_TOKEN must have
+      # access to it (fine-grained PAT scoped to millfolio/website with
+      # contents:write, or a classic PAT with `repo` scope). A public-only token
+      # will 403 the checkout below. The public appcast/zip are still served from
+      # millfolio.app (Cloudflare) — repo visibility doesn't affect the deploy.
       - name: Checkout website
         if: startsWith(github.ref, 'refs/tags/') && env.APPLE_ID != '' && env.WEBSITE_PUSH_TOKEN != ''
         uses: actions/checkout@v6
