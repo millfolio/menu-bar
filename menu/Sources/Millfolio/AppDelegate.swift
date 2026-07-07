@@ -146,8 +146,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let web = WebController(startURL: WebApp.url, pollsForReady: true)
     private static let reloadItemID = NSToolbarItem.Identifier("Reload")
     private static let updatesItemID = NSToolbarItem.Identifier("CheckForUpdates")
-    private static let discordItemID = NSToolbarItem.Identifier("Discord")
-    private static let discordURL = URL(string: "https://discord.gg/ZrWcStMtE4")!
     private var keyMonitor: Any?
 
     init() {
@@ -220,25 +218,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             item.action = #selector(checkUpdatesTapped(_:))
             return item
         }
-        if id == Self.discordItemID {
-            let item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Discord"
-            item.toolTip = "Join the millfolio Discord"
-            item.image = NSImage(systemSymbolName: "bubble.left.and.bubble.right", accessibilityDescription: "Discord")
-            item.isBordered = true
-            item.target = self
-            item.action = #selector(discordTapped(_:))
-            return item
-        }
         return nil
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.reloadItemID, .flexibleSpace, Self.discordItemID, Self.updatesItemID]
+        [Self.reloadItemID, .flexibleSpace, Self.updatesItemID]
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.reloadItemID, Self.updatesItemID, Self.discordItemID, .flexibleSpace]
+        [Self.reloadItemID, Self.updatesItemID, .flexibleSpace]
     }
-    @objc private func discordTapped(_ sender: Any?) { NSWorkspace.shared.open(Self.discordURL) }
 
     /// Closing the window returns the app to a menu-bar agent (no Dock icon); the
     /// menu-bar "Open millfolio" item brings it back.
