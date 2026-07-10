@@ -53,7 +53,10 @@ public final class Bootstrapper: ObservableObject {
     public var onProgress: ((String) -> Void)?
 
     public init() {
-        refreshServerRunning()
+        // Off-main: a synchronous launchctl spawn here runs on the MAIN thread at
+        // app launch (this class is @MainActor) — the first slice of the launch
+        // beachball. The probe lands in `serverRunning` a beat later instead.
+        refreshServerRunningInBackground()
     }
 
     public var isBusy: Bool { if case .running = phase { return true }; return false }
@@ -639,7 +642,8 @@ public final class Bootstrapper: ObservableObject {
     private var guiDomain: String { "gui/\(getuid())" }
 
     /// Start the server LaunchAgent. Idempotent: re-bootstraps a fresh plist.
-    public func startServer() throws {
+    /// Async — the launchctl spawns run off-main (see `spawnProcess`).
+    public func startServer() async throws {
         // Weights are provisioned at runtime by the app server (not at install), so
         // this no longer gates on them: we bootstrap the engine agent even with no
         // weights yet, so the app server's provisioner can `launchctl kickstart` it
@@ -651,30 +655,43 @@ public final class Bootstrapper: ObservableObject {
         try writeLaunchAgent()
         logHeader("Start server: \(Self.model)")
         // Replace any prior instance, then load (RunAtLoad starts it).
-        _ = try? runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
-        try run("/bin/launchctl", ["bootstrap", guiDomain, launchAgentURL.path])
+        _ = await runStatusAsync("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
+        try await runAsync("/bin/launchctl", ["bootstrap", guiDomain, launchAgentURL.path])
         serverRunning = true
     }
 
     /// Stop the server LaunchAgent (no-op if not loaded).
-    public func stopServer() throws {
-        let rc = try runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
+    public func stopServer() async {
+        let rc = await runStatusAsync("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.serverLabel)"])
         if rc != 0 { appendLog("[launchctl bootout exited \(rc) — not loaded?]\n") }
         serverRunning = false
     }
 
     /// Non-throwing menu-button wrappers: surface any failure via `phase`.
     public func tryStartServer() {
-        do { try startServer() } catch { phase = .failed(humanError(error)) }
+        Task { do { try await startServer() } catch { phase = .failed(humanError(error)) } }
     }
     public func tryStopServer() {
-        do { try stopServer() } catch { phase = .failed(humanError(error)) }
+        Task { await stopServer() }
     }
 
     /// Reconcile `serverRunning` with launchd's actual state (e.g. at app launch).
     public func refreshServerRunning() {
         let loaded = (try? runStatus("/bin/launchctl", ["print", "\(guiDomain)/\(Self.serverLabel)"])) == 0
         serverRunning = loaded
+    }
+
+    /// The non-blocking variant the APP uses (init + the menu's Refresh): probe
+    /// launchd on a background queue, publish the result back on the main actor.
+    /// The synchronous `refreshServerRunning()` stays for the CLI-style paths that
+    /// need the answer before their next line.
+    public func refreshServerRunningInBackground() {
+        Task { [weak self] in
+            guard let self else { return }
+            let code = await Self.spawnProcess(
+                "/bin/launchctl", ["print", "\(self.guiDomain)/\(Self.serverLabel)"]).code
+            self.serverRunning = (code == 0)
+        }
     }
 
     /// Write the LaunchAgent plist that runs the built server against the weights.
@@ -1735,33 +1752,35 @@ public final class Bootstrapper: ObservableObject {
     /// app passes `false`: it IS the browser (the native WKWebView `WebWindow`), so
     /// it must NOT also `open` the system default browser or `tailscale serve` — it
     /// just needs :10000 up. The wait-for-ready is done either way.
-    public func startAppServer(vaultDir dir: String, openBrowser: Bool = true) throws {
+    public func startAppServer(vaultDir dir: String, openBrowser: Bool = true) async throws {
         ensureVaultShims()   // guard search()'s dlopen before the server runs programs
         let url = try writeAppServerLaunchAgent(vaultDir: dir)
-        _ = try? runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.appServerLabel)"])
-        killStaleOnPort(10000); killStaleOnPort(10001)   // reap any legacy nohup instance
-        try run("/bin/launchctl", ["bootstrap", guiDomain, url.path])
-        _ = waitForPort(10000, timeout: 25)
+        _ = await runStatusAsync("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.appServerLabel)"])
+        await killStaleOnPort(10000)
+        await killStaleOnPort(10001)   // reap any legacy nohup instance
+        try await runAsync("/bin/launchctl", ["bootstrap", guiDomain, url.path])
+        _ = await waitForPort(10000, timeout: 25)
         // Don't open the browser on "socket listening" alone — the multi-worker app
         // server BINDS the port before its workers can serve files, so the first load
         // raced the `_app/*.js` chunks to 404 (a page refresh fixed it). Wait until a
         // real STATIC asset (the favicon, served from MILLFOLIO_WEB_DIR) returns 200 —
         // then the JS chunks are being served too. Falls through + opens on timeout.
-        _ = waitForHttp(10000, path: "/favicon.svg", timeout: 25)
+        _ = await waitForHttp(10000, path: "/favicon.svg", timeout: 25)
         guard openBrowser else { return }
-        _ = try? runStatus("/bin/bash", ["-c",
+        _ = await runStatusAsync("/bin/bash", ["-c",
             "command -v tailscale >/dev/null 2>&1 && tailscale serve --bg 10000 >/dev/null 2>&1 || true"])
-        _ = try? runStatus("/bin/bash", ["-c", "open 'http://localhost:10000' >/dev/null 2>&1 &"])
+        _ = await runStatusAsync("/bin/bash", ["-c", "open 'http://localhost:10000' >/dev/null 2>&1 &"])
     }
 
     /// Poll until something is LISTENING on `port`, or `timeout` s elapse.
+    /// Async poll — suspends between probes instead of sleeping the main thread.
     @discardableResult
-    public func waitForPort(_ port: Int, timeout: Double = 25) -> Bool {
+    public func waitForPort(_ port: Int, timeout: Double = 25) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if (try? runStatus("/bin/bash", ["-c",
-                "lsof -ti tcp:\(port) -sTCP:LISTEN >/dev/null 2>&1"])) == 0 { return true }
-            Thread.sleep(forTimeInterval: 0.3)
+            if await runStatusAsync("/bin/bash", ["-c",
+                "lsof -ti tcp:\(port) -sTCP:LISTEN >/dev/null 2>&1"]) == 0 { return true }
+            try? await Task.sleep(nanoseconds: 300_000_000)
         }
         return false
     }
@@ -1771,13 +1790,13 @@ public final class Bootstrapper: ObservableObject {
     /// socket can be listening before the workers serve content). Probe a real static
     /// asset to confirm the web root is mounted + serving.
     @discardableResult
-    public func waitForHttp(_ port: Int, path: String = "/", timeout: Double = 25) -> Bool {
+    public func waitForHttp(_ port: Int, path: String = "/", timeout: Double = 25) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let code = try? run("/bin/bash", ["-c",
+            if let code = try? await runAsync("/bin/bash", ["-c",
                 "curl -s -o /dev/null -w '%{http_code}' --max-time 2 'http://localhost:\(port)\(path)' 2>/dev/null"]),
                 code.trimmingCharacters(in: .whitespacesAndNewlines) == "200" { return true }
-            Thread.sleep(forTimeInterval: 0.3)
+            try? await Task.sleep(nanoseconds: 300_000_000)
         }
         return false
     }
@@ -1792,40 +1811,41 @@ public final class Bootstrapper: ObservableObject {
             atPath: dir, withIntermediateDirectories: true)
         // 1. Ensure the inference server is up AND READY (waits for :8000 to answer,
         //    so the app/UI never races the ~10s weight load).
-        try ensureInferenceServer()
+        try await ensureInferenceServer()
         // 2. Stop any prior app-server agent + reap stale ports, build it if an older
         //    install predates it (self-heal on upgrade), then (re)start it under
         //    launchd — the SAME clean mechanism as the inference server.
-        _ = stopAppServer()
+        _ = await stopAppServer()
         if !isAppServerInstalled { try await installAppServer() }
         // `openBrowser` forwarded: the menu-bar app passes false (it renders :10000 in
         // its own WKWebView, so it must not also spawn the system browser).
-        try startAppServer(vaultDir: dir, openBrowser: openBrowser)
+        try await startAppServer(vaultDir: dir, openBrowser: openBrowser)
     }
 
     /// Ensure the combined inference server is running (idempotent). No-op if it
     /// isn't installed yet — the caller surfaces that downstream. Without this,
     /// `ask`/the vault loop blocks on a dead model endpoint with no clue why.
-    public func ensureInferenceServer() throws {
+    public func ensureInferenceServer() async throws {
         guard isServerInstalled else { return }
         // Probe the PORT, not just launchd state — a "loaded" agent can be dead or
         // still loading weights. If it's already serving, we're done.
-        if inferenceListening() { serverRunning = true; return }
-        killStaleOnPort(8000)        // reap a half-dead instance holding the port
+        if await inferenceListening() { serverRunning = true; return }
+        await killStaleOnPort(8000)  // reap a half-dead instance holding the port
         // No chat weights yet (fresh install, before the app server's background
         // provisioner has fetched the default model)? Bootstrap the engine agent so
         // it's loaded + kickstartable — but DON'T wait for readiness (it can't serve
         // until the weights land; the provisioner kickstarts it then).
         guard weightsPresent else {
             set("Model weights aren't present yet — the app will download them in the background, then start the engine…")
-            try? startServer()       // bootstrap the (config-authoritative) agent
+            try? await startServer() // bootstrap the (config-authoritative) agent
             return
         }
         set("Starting the inference server (loading model weights can take a bit)…")
-        try startServer()            // bootout + bootstrap (RunAtLoad)
+        try await startServer()      // bootout + bootstrap (RunAtLoad)
         // WAIT until it actually answers, so callers (mill start / ask / index)
-        // never race the ~10s weight load and hit ConnectionRefused.
-        if !waitForInference(timeout: 90) {
+        // never race the ~10s weight load and hit ConnectionRefused. The wait is
+        // async — the main thread keeps serving the UI while the weights load.
+        if !(await waitForInference(timeout: 90)) {
             throw BootstrapError.step("start server",
                 "the inference server didn't become ready on :8000 within 90s — see \(logFileURL.path)")
         }
@@ -1835,13 +1855,13 @@ public final class Bootstrapper: ObservableObject {
     /// Stop the app server. Bootout the launchd agent (the current mechanism), and
     /// also pkill any legacy nohup-launched instance (pre-launchd installs) + reap
     /// the ports. Returns true if anything was running.
-    public func stopAppServer() -> Bool {
-        let wasLoaded = (try? runStatus("/bin/launchctl", ["print", "\(guiDomain)/\(Self.appServerLabel)"])) == 0
-        _ = try? runStatus("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.appServerLabel)"])
+    public func stopAppServer() async -> Bool {
+        let wasLoaded = await runStatusAsync("/bin/launchctl", ["print", "\(guiDomain)/\(Self.appServerLabel)"]) == 0
+        _ = await runStatusAsync("/bin/launchctl", ["bootout", "\(guiDomain)/\(Self.appServerLabel)"])
         // Legacy nohup processes from an older install (no launchd agent): pkill them.
-        let ws = (try? runStatus("/usr/bin/pkill", ["-f", "build/millfolio-ws"])) == 0
-        let srv = (try? runStatus("/usr/bin/pkill", ["-f", "build/millfolio-server"])) == 0
-        for port in [10000, 10001] { killStaleOnPort(port) }
+        let ws = await runStatusAsync("/usr/bin/pkill", ["-f", "build/millfolio-ws"]) == 0
+        let srv = await runStatusAsync("/usr/bin/pkill", ["-f", "build/millfolio-server"]) == 0
+        for port in [10000, 10001] { await killStaleOnPort(port) }
         return wasLoaded || ws || srv
     }
 
@@ -1850,8 +1870,8 @@ public final class Bootstrapper: ObservableObject {
     /// launchd-"loaded" agent can still be mid-load or dead, so we probe the port,
     /// not just launchctl state.) Returns the reported build version, or nil if it
     /// isn't answering yet.
-    public func inferenceVersion() -> String? {
-        guard let out = try? run("/bin/bash", ["-c",
+    public func inferenceVersion() async -> String? {
+        guard let out = try? await runAsync("/bin/bash", ["-c",
             "curl -s --max-time 2 http://127.0.0.1:8000/v1/version 2>/dev/null"]),
             out.contains("\"version\"") else { return nil }
         // Pull the version string out of {"engine":"millfolio","version":"…"}.
@@ -1862,23 +1882,24 @@ public final class Bootstrapper: ObservableObject {
         return String(out[q1.upperBound..<q2.lowerBound])
     }
 
-    public func inferenceListening() -> Bool { inferenceVersion() != nil }
+    public func inferenceListening() async -> Bool { await inferenceVersion() != nil }
 
     /// Poll until the inference server answers on :8000, or `timeout` s elapse.
+    /// Async poll — suspends between probes instead of sleeping the main thread.
     @discardableResult
-    public func waitForInference(timeout: Double = 60) -> Bool {
+    public func waitForInference(timeout: Double = 60) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if inferenceListening() { return true }
-            Thread.sleep(forTimeInterval: 0.4)
+            if await inferenceListening() { return true }
+            try? await Task.sleep(nanoseconds: 400_000_000)
         }
-        return inferenceListening()
+        return await inferenceListening()
     }
 
     /// Reap any process LISTENING on `port` that launchd/pkill missed, so a fresh
     /// server binds without AddressInUse. Best-effort; never throws.
-    public func killStaleOnPort(_ port: Int) {
-        _ = try? runStatus("/bin/bash", ["-c",
+    public func killStaleOnPort(_ port: Int) async {
+        _ = await runStatusAsync("/bin/bash", ["-c",
             "p=$(lsof -ti tcp:\(port) -sTCP:LISTEN 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; true"])
     }
 
@@ -1926,7 +1947,7 @@ public final class Bootstrapper: ObservableObject {
         // `ensureBundle` re-fetches, then re-run the full provision. Because
         // `installVersionKey` now equals the NEW prod tag, every per-step guard re-fires
         // and rebuilds against the fresh source.
-        _ = stopAppServer()
+        _ = await stopAppServer()
         try? FileManager.default.removeItem(at: bundleRoot)
         try await installVault()
     }
@@ -1988,6 +2009,66 @@ public final class Bootstrapper: ObservableObject {
         _ = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return p.terminationStatus
+    }
+
+    // ── off-main subprocess primitives (the no-beachball path) ────────────────
+    // `run`/`runStatus` above SPAWN + WAIT synchronously — called from this
+    // @MainActor class that blocks the main thread (spinning beachball) for the
+    // subprocess's whole lifetime. The app-launch path (start servers, port/HTTP
+    // readiness polls, launchctl probes) goes through these async twins instead:
+    // the blocking spawn/wait happens on a background queue and the @MainActor
+    // caller just suspends, so the menu bar + windows stay responsive.
+
+    /// Spawn + wait on a background queue. `spawnError` carries a failed exec
+    /// (missing binary); otherwise combined output + exit status, like `run`.
+    nonisolated private static func spawnProcess(
+        _ launch: String, _ args: [String], cwd: URL? = nil, env: [String: String]? = nil
+    ) async -> (out: String, code: Int32, spawnError: Error?) {
+        await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: launch)
+                p.arguments = args
+                if let cwd { p.currentDirectoryURL = cwd }
+                if let env { p.environment = env }
+                let pipe = Pipe()
+                p.standardOutput = pipe
+                p.standardError = pipe
+                do { try p.run() } catch {
+                    cont.resume(returning: ("", -1, error))
+                    return
+                }
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                cont.resume(returning: (String(data: data, encoding: .utf8) ?? "",
+                                        p.terminationStatus, nil))
+            }
+        }
+    }
+
+    /// `run`, off-main: the same log + throw-on-nonzero contract, main actor free
+    /// while the subprocess runs.
+    @discardableResult
+    private func runAsync(_ launch: String, _ args: [String],
+                          cwd: URL? = nil, env: [String: String]? = nil) async throws -> String {
+        appendLog("\n$ \(launch) \(args.joined(separator: " "))\n")
+        let r = await Self.spawnProcess(launch, args, cwd: cwd, env: env)
+        if let e = r.spawnError { throw e }
+        appendLog(r.out)
+        if r.code != 0 {
+            appendLog("\n[\(URL(fileURLWithPath: launch).lastPathComponent) exited \(r.code)]\n")
+            throw BootstrapError.step(URL(fileURLWithPath: launch).lastPathComponent,
+                                      "exit \(r.code): " + r.out.suffix(500))
+        }
+        return r.out
+    }
+
+    /// `runStatus`, off-main — for probes where nonzero is expected. A failed
+    /// exec maps to -1 (the probes only compare against 0).
+    @discardableResult
+    private func runStatusAsync(_ launch: String, _ args: [String]) async -> Int32 {
+        let r = await Self.spawnProcess(launch, args)
+        return r.spawnError == nil ? r.code : -1
     }
 
     // ── diagnosable one-shot runs (ask / index) ────────────────────────────────

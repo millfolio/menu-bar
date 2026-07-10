@@ -54,7 +54,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Refresh") { client.refresh(); bootstrapper.refreshServerRunning() }
+        Button("Refresh") { client.refresh(); bootstrapper.refreshServerRunningInBackground() }
         if bootstrapper.hasLog {
             Button("Open Log") { bootstrapper.openLog() }
         }
@@ -87,8 +87,10 @@ struct MenuContent: View {
             // Provisioned: start / stop the local servers.
             if bootstrapper.serverRunning || client.status == .online {
                 Button("Stop millfolio") {
-                    _ = bootstrapper.stopAppServer()
-                    bootstrapper.tryStopServer()
+                    Task { @MainActor in
+                        _ = await bootstrapper.stopAppServer()
+                        bootstrapper.tryStopServer()
+                    }
                 }
             } else {
                 Button("Start millfolio") {

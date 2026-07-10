@@ -38,7 +38,7 @@ struct Start: AsyncParsableCommand {
         abstract: "Start the server as a launchd LaunchAgent (me.millfolio.server).")
     @MainActor func run() async throws {
         let boot = Bootstrapper()
-        try boot.startServer()
+        try await boot.startServer()
         print("✓ server started — http://127.0.0.1:8000 (use `millfolio status`)")
     }
 }
@@ -48,7 +48,7 @@ struct Stop: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Stop the server LaunchAgent.")
     @MainActor func run() async throws {
         let boot = Bootstrapper()
-        try boot.stopServer()
+        await boot.stopServer()
         print("✓ server stopped")
     }
 }
