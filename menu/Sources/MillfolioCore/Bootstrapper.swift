@@ -1822,27 +1822,47 @@ public final class Bootstrapper: ObservableObject {
         //    over it (a clean machine has no vault dir yet).
         try? FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true)
-        // 1. Ensure the inference server is up AND READY (waits for :8000 to answer,
-        //    so the app/UI never races the ~10s weight load).
-        try await ensureInferenceServer()
-        // 2. Stop any prior app-server agent + reap stale ports, build it if an older
-        //    install predates it (self-heal on upgrade), then (re)start it under
-        //    launchd — the SAME clean mechanism as the inference server.
+        // 1. Kick the engine agent WITHOUT waiting — it binds and serves /v1/status
+        //    instantly and loads the model in its own background thread.
+        let engineComing = try await kickInferenceServer()
+        // 2. App servers up FIRST (they start in ~a second), so the app's WKWebView
+        //    has something to render while the model loads instead of the whole
+        //    start hanging on the engine. Stop any prior agent + reap stale ports,
+        //    build it if an older install predates it (self-heal on upgrade), then
+        //    (re)start it under launchd.
         _ = await stopAppServer()
         if !isAppServerInstalled { try await installAppServer() }
         // `openBrowser` forwarded: the menu-bar app passes false (it renders :10000 in
         // its own WKWebView, so it must not also spawn the system browser).
         try await startAppServer(vaultDir: dir, openBrowser: openBrowser)
+        // 3. Now surface the engine's load progress (phases via /v1/status) in the
+        //    app instead of hanging silently; this throws only when the engine is
+        //    dead or reports an error (e.g. model not downloaded), not when slow.
+        if engineComing {
+            try await waitForEngineReady()
+            serverRunning = true
+        }
     }
 
-    /// Ensure the combined inference server is running (idempotent). No-op if it
-    /// isn't installed yet — the caller surfaces that downstream. Without this,
-    /// `ask`/the vault loop blocks on a dead model endpoint with no clue why.
+    /// Ensure the combined inference server is running AND ready (idempotent).
+    /// No-op if it isn't installed yet — the caller surfaces that downstream.
+    /// Without this, `ask`/the vault loop blocks on a dead model endpoint with no
+    /// clue why. Readiness is awaited with progress via `waitForEngineReady`.
     public func ensureInferenceServer() async throws {
-        guard isServerInstalled else { return }
+        guard try await kickInferenceServer() else { return }
+        try await waitForEngineReady()
+        serverRunning = true
+    }
+
+    /// Start the engine agent WITHOUT waiting for model readiness. Returns true
+    /// when the engine is expected to become ready (already serving, or launched
+    /// with weights present) — i.e. when a `waitForEngineReady` is worthwhile.
+    @discardableResult
+    public func kickInferenceServer() async throws -> Bool {
+        guard isServerInstalled else { return false }
         // Probe the PORT, not just launchd state — a "loaded" agent can be dead or
         // still loading weights. If it's already serving, we're done.
-        if await inferenceListening() { serverRunning = true; return }
+        if await inferenceListening() { serverRunning = true; return true }
         await killStaleOnPort(8000)  // reap a half-dead instance holding the port
         // No chat weights yet (fresh install, before the app server's background
         // provisioner has fetched the default model)? Bootstrap the engine agent so
@@ -1851,18 +1871,93 @@ public final class Bootstrapper: ObservableObject {
         guard weightsPresent else {
             set("Model weights aren't present yet — the app will download them in the background, then start the engine…")
             try? await startServer() // bootstrap the (config-authoritative) agent
-            return
+            return false
         }
-        set("Starting the inference server (loading model weights can take a bit)…")
+        set("Starting the inference server…")
         try await startServer()      // bootout + bootstrap (RunAtLoad)
-        // WAIT until it actually answers, so callers (mill start / ask / index)
-        // never race the ~10s weight load and hit ConnectionRefused. The wait is
-        // async — the main thread keeps serving the UI while the weights load.
-        if !(await waitForInference(timeout: 90)) {
-            throw BootstrapError.step("start server",
-                "the inference server didn't become ready on :8000 within 90s — see \(logFileURL.path)")
+        return true
+    }
+
+    /// Wait until the engine reports ready on /v1/status, surfacing load phases
+    /// ("loading model weights…", "warming up GPU kernels…") through `set` so the
+    /// app shows progress instead of hanging. Distinguishes:
+    /// - slow but loading → keeps waiting (phase updates prove liveness),
+    /// - an engine-reported error (e.g. "model not downloaded") → throws with it,
+    /// - a dead engine (nothing listening on :8000) → throws quickly,
+    /// - a pre-/v1/status engine (≤ v0.4.50-rc.4: silent while loading, 404 once
+    ///   ready) → falls back to the legacy 90 s /v1/version wait.
+    public func waitForEngineReady(maxWait: TimeInterval = 900) async throws {
+        let deadline = Date().addingTimeInterval(maxWait)
+        var lastPhase = ""
+        var silentSince: Date?      // answering nothing at all since…
+        while Date() < deadline {
+            if let r = await Self.httpGet("http://127.0.0.1:8000/v1/status") {
+                silentSince = nil
+                if r.code == 200, let state = Self.jsonField("state", in: r.body) {
+                    switch state {
+                    case "ready":
+                        return
+                    case "error":
+                        let msg = Self.jsonField("error", in: r.body) ?? "unknown engine error"
+                        throw BootstrapError.step("start server",
+                            "the inference engine reports: \(msg)")
+                    default:        // "loading"
+                        let phase = Self.jsonField("phase", in: r.body) ?? "loading"
+                        if phase != lastPhase {
+                            lastPhase = phase
+                            set("Inference engine: \(phase)…")
+                        }
+                    }
+                } else if r.code == 404 {
+                    // An older engine only answers once READY (it 404s the unknown
+                    // /v1/status route) — confirm via the legacy readiness probe.
+                    if await waitForInference(timeout: 90) { return }
+                    throw BootstrapError.step("start server",
+                        "the inference server didn't become ready on :8000 within 90s — see \(logFileURL.path)")
+                }
+                // other codes: transitional — keep polling
+            } else if await portListening(8000) {
+                // Listening but not answering: an older engine mid-load queues
+                // requests silently. No status to stream — say so once and wait
+                // out the legacy load window.
+                if lastPhase != "legacy" {
+                    lastPhase = "legacy"
+                    set("Inference engine is loading the model (older engine — no progress available)…")
+                }
+                if silentSince == nil { silentSince = Date() }
+                if Date().timeIntervalSince(silentSince!) > 180 {
+                    throw BootstrapError.step("start server",
+                        "the inference server has been silent on :8000 for 3 minutes — see \(logFileURL.path)")
+                }
+            } else {
+                // Nothing listening: the new engine binds instantly, so more than
+                // a few seconds of this means dead, not loading (launchd may be
+                // between respawns — allow a short grace).
+                if silentSince == nil { silentSince = Date() }
+                if Date().timeIntervalSince(silentSince!) > 15 {
+                    throw BootstrapError.step("start server",
+                        "the inference server isn't listening on :8000 — see \(logFileURL.path)")
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        serverRunning = true
+        throw BootstrapError.step("start server",
+            "the inference server didn't become ready within \(Int(maxWait / 60)) minutes — see \(logFileURL.path)")
+    }
+
+    /// Minimal `"key":"value"` string extraction — enough for the engine's flat
+    /// /v1/status body; avoids JSONSerialization for a hot 1 Hz poll.
+    nonisolated static func jsonField(_ key: String, in body: String) -> String? {
+        guard let k = body.range(of: "\"\(key)\":\"") else { return nil }
+        guard let end = body.range(of: "\"", range: k.upperBound..<body.endIndex) else { return nil }
+        return String(body[k.upperBound..<end.lowerBound])
+    }
+
+    /// Is anything LISTENING on `port`? (Distinguishes a dead engine from an
+    /// older one that accepts but queues requests while loading weights.)
+    private func portListening(_ port: Int) async -> Bool {
+        await runStatusAsync("/bin/bash", ["-c",
+            "lsof -ti tcp:\(port) -sTCP:LISTEN >/dev/null 2>&1"]) == 0
     }
 
     /// Stop the app server. Bootout the launchd agent (the current mechanism), and
