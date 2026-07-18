@@ -86,40 +86,40 @@ public final class Bootstrapper: ObservableObject {
     private var mojoPythonURL: URL {
         URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.mojoVersion)-release.conda")!
     }
-    // ── privacy_box (privacy harness) ─────────────────────────────────────────────
-    // privacy_box builds on the SAME unified Mojo toolchain as the server + vault —
+    // ── enclave (privacy harness) ─────────────────────────────────────────────
+    // enclave builds on the SAME unified Mojo toolchain as the server + vault —
     // every repo pins one nightly now, so it shares the single `mojoPrefix` toolchain
     // (no separate download). It's a one-shot CLI (not a daemon), so "start" opens a
     // ready-to-use Terminal rather than launching a server.
-    public static let privacy_boxMojoVersion = "1.0.0b3.dev2026062706"
-    private var privacy_boxMojoCompilerURL: URL {
-        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.privacy_boxMojoVersion)-release.conda")!
+    public static let enclaveMojoVersion = "1.0.0b3.dev2026062706"
+    private var enclaveMojoCompilerURL: URL {
+        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.enclaveMojoVersion)-release.conda")!
     }
-    private var privacy_boxMojoPythonURL: URL {
-        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.privacy_boxMojoVersion)-release.conda")!
+    private var enclaveMojoPythonURL: URL {
+        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.enclaveMojoVersion)-release.conda")!
     }
-    /// Unified toolchain: privacy_box shares the single `mojoPrefix` install (the
+    /// Unified toolchain: enclave shares the single `mojoPrefix` install (the
     /// staleness check dedupes, so the toolchain is downloaded once for all components).
-    private var privacy_boxMojoPrefix: URL { mojoPrefix }
-    private var privacy_boxRoot: URL { bundleRoot.appendingPathComponent("privacy_box", isDirectory: true) }
-    /// privacy_box checkout inside the unpacked bundle (sibling of flare/json/jinja2.mojo).
-    private var privacy_boxDir: URL { privacy_boxRoot.appendingPathComponent("privacy_box", isDirectory: true) }
-    private var privacy_boxBin: URL { privacy_boxDir.appendingPathComponent("build/privacy_box") }
-    /// The built privacy_box binary is present.
-    public var isPrivacyBoxInstalled: Bool { FileManager.default.isExecutableFile(atPath: privacy_boxBin.path) }
+    private var enclaveMojoPrefix: URL { mojoPrefix }
+    private var enclaveRoot: URL { bundleRoot.appendingPathComponent("enclave", isDirectory: true) }
+    /// enclave checkout inside the unpacked bundle (sibling of flare/json/jinja2.mojo).
+    private var enclaveDir: URL { enclaveRoot.appendingPathComponent("enclave", isDirectory: true) }
+    private var enclaveBin: URL { enclaveDir.appendingPathComponent("build/enclave") }
+    /// The built enclave binary is present.
+    public var isEnclaveInstalled: Bool { FileManager.default.isExecutableFile(atPath: enclaveBin.path) }
 
     // ── millfolio (personal data vault) ───────────────────────────────────────────
     // millfolio is a one-shot vault CLI shipped PRECOMPILED (commercial IP
     // protection — no `.mojo` source on-device). Its bundle carries a prebuilt
     // build/millfolio binary, pkgs/*.mojoc (the vault tool surface + its libs,
-    // precompiled against the SAME Mojo nightly as privacy_box), and the prebuilt
+    // precompiled against the SAME Mojo nightly as enclave), and the prebuilt
     // FFI shims. Install just places the binary + installMillfolioShims(); the
     // generated `from vault import *` programs compile against `-I pkgs`.
     private var millfolioMojoCompilerURL: URL {
-        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.privacy_boxMojoVersion)-release.conda")!
+        URL(string: "\(Self.condaChannel)/osx-arm64/mojo-compiler-\(Self.enclaveMojoVersion)-release.conda")!
     }
     private var millfolioMojoPythonURL: URL {
-        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.privacy_boxMojoVersion)-release.conda")!
+        URL(string: "\(Self.condaChannel)/noarch/mojo-python-\(Self.enclaveMojoVersion)-release.conda")!
     }
     /// Unified toolchain: the vault build shares the single `mojoPrefix` install too.
     private var millfolioMojoPrefix: URL { mojoPrefix }
@@ -131,7 +131,7 @@ public final class Bootstrapper: ObservableObject {
     public var isMillfolioInstalled: Bool { FileManager.default.isExecutableFile(atPath: millfolioBin.path) }
 
     // ── app server (the streaming WS backend, from millfolio/app) ──────────────
-    // Built ON-DEVICE against the privacy_box engine tree, reusing privacy_box's Mojo
+    // Built ON-DEVICE against the enclave engine tree, reusing enclave's Mojo
     // toolchain + flare shims — so no new toolchain. See app/server/CUTOVER.md.
     private var appRoot: URL { bundleRoot.appendingPathComponent("app", isDirectory: true) }
     private var appServerBin: URL { appRoot.appendingPathComponent("build/millfolio-server") }
@@ -141,12 +141,12 @@ public final class Bootstrapper: ObservableObject {
     // ── default config files (~/.config) ───────────────────────────────────────
     // Seeded with sensible defaults on install if absent, so a fresh setup has an
     // editable starting point. The engines read these (engine = the inference engine,
-    // privacy_box = privacy_box); we NEVER overwrite an existing file.
+    // enclave = enclave); we NEVER overwrite an existing file.
     private var dotConfig: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
     }
     private var engineConfigURL: URL { dotConfig.appendingPathComponent("millfolio/config.json") }
-    private var privacy_boxConfigURL: URL { dotConfig.appendingPathComponent("privacy_box/config.json") }
+    private var enclaveConfigURL: URL { dotConfig.appendingPathComponent("enclave/config.json") }
 
     private static let engineConfigDefault = """
     {
@@ -156,7 +156,7 @@ public final class Bootstrapper: ObservableObject {
       "kv_budget_mb": 8192
     }
     """
-    private static let privacy_boxConfigDefault = """
+    private static let enclaveConfigDefault = """
     {
       "local_url": "http://127.0.0.1:8000/v1",
       "local_model": "Qwen2.5-0.5B-Instruct",
@@ -192,7 +192,7 @@ public final class Bootstrapper: ObservableObject {
 
     // ── source bundle (one millfolio.zip from the vault repo) ────────────────────
     // All on-device-built source ships in ONE archive whose subtrees mirror the
-    // former four zips: runner/ privacy_box/ millfolio/ app/. Downloaded once and
+    // former four zips: runner/ enclave/ millfolio/ app/. Downloaded once and
     // built per-component, so the per-component build steps below are unchanged.
     // Pin the bundle to THIS CLI's release tag, not /releases/latest/, so the CLI and
     // its bundle move atomically AND a dev (pre-release) CLI fetches the dev bundle —
@@ -318,7 +318,7 @@ public final class Bootstrapper: ObservableObject {
     public var canStartServer: Bool { isServerInstalled && weightsPresent && !serverRunning }
 
     /// Whether the full vault runtime is provisioned: all four on-device components
-    /// (engine, vault tools, privacy_box orchestrator, app server) are placed and
+    /// (engine, vault tools, enclave harness, app server) are placed and
     /// executable. This is the "does the app need to run first-run onboarding?"
     /// signal — a read-only composite of the per-component `is…Installed` flags, so
     /// it never triggers work. Weights are NOT part of this: they're fetched at
@@ -329,7 +329,7 @@ public final class Bootstrapper: ObservableObject {
     /// `vault/cli` copy. Both are pure / behavior-preserving; upstream them to keep
     /// the two copies in sync.
     public var isProvisioned: Bool {
-        isServerInstalled && isMillfolioInstalled && isPrivacyBoxInstalled && isAppServerInstalled
+        isServerInstalled && isMillfolioInstalled && isEnclaveInstalled && isAppServerInstalled
     }
 
     // ── logging ──────────────────────────────────────────────────────────────
@@ -593,7 +593,7 @@ public final class Bootstrapper: ObservableObject {
 
         try await ensureBundle()
 
-        // The engine ships as SOURCE and is compiled ON-DEVICE (unlike privacy_box +
+        // The engine ships as SOURCE and is compiled ON-DEVICE (unlike enclave +
         // the app server, which now ship prebuilt): its AOT GPU/Metal kernels can't
         // be built on the GPU-less GitHub CI runner ("Unknown GPU architecture
         // detected"), so the compile must happen on the user's Mac. That's the same
@@ -854,7 +854,7 @@ public final class Bootstrapper: ObservableObject {
     }
 
     /// Download + unpack the one source bundle (millfolio.zip) once. Each component
-    /// (server/privacy_box/millfolio/app) calls this before building, so it runs once
+    /// (server/enclave/millfolio/app) calls this before building, so it runs once
     /// per install and is a no-op thereafter. Gates on the **actual unpacked engine
     /// source**, not a stamp: a stamp can outlive its content (e.g. a stale `mill
     /// update` that removed runner/), which would skip the re-unpack and then fail
@@ -1032,89 +1032,89 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
-    // Note: privacy_box + the app server are no longer `mojo build`d on-device —
+    // Note: enclave + the app server are no longer `mojo build`d on-device —
     // they ship prebuilt (rpath-relocated + ad-hoc signed) by their CI packagers,
     // so install just verifies + chmods them. Only the engine still builds
     // on-device (its GPU/Metal kernels can't compile on the GPU-less CI runner),
     // which is why buildBinary/mojoEnv/signServerIdentity above are retained.
 
-    // ── privacy_box: install ──────────────────────────────────────────────────────
+    // ── enclave: install ──────────────────────────────────────────────────────
     /// Menu-app entry point: fire-and-forget, drives `phase`.
-    public func installPrivacyBox() {
+    public func installEnclave() {
         guard !isBusy else { return }
         phase = .running("Starting…")
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            do { try await self.installPrivacyBoxEngine(); await self.set(done: true) }
+            do { try await self.installEnclaveEngine(); await self.set(done: true) }
             catch { await self.set(failed: humanError(error)) }
         }
     }
 
-    /// Download privacy_box's Mojo toolchain + source bundle and build it. Separate
-    /// from the server: privacy_box is on a different nightly and ships its own
+    /// Download enclave's Mojo toolchain + source bundle and build it. Separate
+    /// from the server: enclave is on a different nightly and ships its own
     /// vendored flare/json/jinja2.mojo + prebuilt FFI shims.
-    public func installPrivacyBoxEngine() async throws {
+    public func installEnclaveEngine() async throws {
         // Idempotent: skip the whole download+build if the binary is already there.
-        if stepCurrent(".privacy_box-step", [privacy_boxBin])
-            && !mojoToolchainStale(privacy_boxMojoPrefix, Self.privacy_boxMojoVersion) {
-            set("privacy_box already installed — skipping")
+        if stepCurrent(".enclave-step", [enclaveBin])
+            && !mojoToolchainStale(enclaveMojoPrefix, Self.enclaveMojoVersion) {
+            set("enclave already installed — skipping")
             return
         }
         let fm = FileManager.default
-        for d in [support, privacy_boxMojoPrefix, privacy_boxRoot, cacheDir] {
+        for d in [support, enclaveMojoPrefix, enclaveRoot, cacheDir] {
             try fm.createDirectory(at: d, withIntermediateDirectories: true)
         }
-        logHeader("Install privacy_box")
+        logHeader("Install enclave")
 
-        // 1. Mojo toolchain (privacy_box's nightly — distinct from the engine's).
-        if mojoToolchainStale(privacy_boxMojoPrefix, Self.privacy_boxMojoVersion) {
-            set("Downloading Mojo compiler for privacy_box (~70 MB)…")
-            try? fm.removeItem(at: privacy_boxMojoPrefix)   // clear any stale nightly
-            try fm.createDirectory(at: privacy_boxMojoPrefix, withIntermediateDirectories: true)
-            let compiler = try await download(privacy_boxMojoCompilerURL, name: "privacy_box-mojo-compiler.conda")
+        // 1. Mojo toolchain (enclave's nightly — distinct from the engine's).
+        if mojoToolchainStale(enclaveMojoPrefix, Self.enclaveMojoVersion) {
+            set("Downloading Mojo compiler for enclave (~70 MB)…")
+            try? fm.removeItem(at: enclaveMojoPrefix)   // clear any stale nightly
+            try fm.createDirectory(at: enclaveMojoPrefix, withIntermediateDirectories: true)
+            let compiler = try await download(enclaveMojoCompilerURL, name: "enclave-mojo-compiler.conda")
             set("Extracting Mojo…")
-            try extractConda(compiler, into: privacy_boxMojoPrefix)
-            let py = try await download(privacy_boxMojoPythonURL, name: "privacy_box-mojo-python.conda")
-            try extractConda(py, into: privacy_boxMojoPrefix)
-            recordMojoVersion(privacy_boxMojoPrefix, Self.privacy_boxMojoVersion)
+            try extractConda(compiler, into: enclaveMojoPrefix)
+            let py = try await download(enclaveMojoPythonURL, name: "enclave-mojo-python.conda")
+            try extractConda(py, into: enclaveMojoPrefix)
+            recordMojoVersion(enclaveMojoPrefix, Self.enclaveMojoVersion)
         }
-        try relocateMojoPrefix(privacy_boxMojoPrefix)
+        try relocateMojoPrefix(enclaveMojoPrefix)
 
-        // 2. privacy_box bundle — PREBUILT binary + runtime files (sandbox profiles,
+        // 2. enclave bundle — PREBUILT binary + runtime files (sandbox profiles,
         //    resources, web/dist) + prebuilt FFI shims, published by CI. No `.mojo`
         //    source; the binary was built + rpath-relocated + ad-hoc signed in CI by
-        //    privacy-box/scripts/package_privacy_box.sh (mirrors the vault `millfolio`
+        //    enclave/scripts/package_enclave.sh (mirrors the vault `millfolio`
         //    binary).
         try await ensureBundle()
-        guard fm.fileExists(atPath: privacy_boxBin.path) else {
-            throw BootstrapError.step("unpack", "privacy_box zip missing prebuilt privacy_box/build/privacy_box")
+        guard fm.fileExists(atPath: enclaveBin.path) else {
+            throw BootstrapError.step("unpack", "enclave zip missing prebuilt enclave/build/enclave")
         }
 
         // 3. The binary is already built — nothing to compile on-device. Just ensure
         //    it's executable. (It links the Mojo runtime dylibs from mojo/lib via its
         //    relocated @loader_path rpath, and its per-query codegen still shells
         //    `mojo build` against the millfolio pkgs at runtime — the toolchain above
-        //    stays for both.) The vault web UI is served by the app server; privacy_box
-        //    here is only the orchestrator/sandbox the generated programs run under.
-        set("Installing privacy_box…")
-        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: privacy_boxBin.path)
+        //    stays for both.) The vault web UI is served by the app server; enclave
+        //    here is only the harness/sandbox the generated programs run under.
+        set("Installing enclave…")
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: enclaveBin.path)
 
         // 4. Put the bundle's FFI shims under the toolchain's lib/, so flare finds
-        //    them via $CONDA_PREFIX/lib at runtime — privacy_box runs WITH CONDA_PREFIX
+        //    them via $CONDA_PREFIX/lib at runtime — enclave runs WITH CONDA_PREFIX
         //    set (it shells `mojo build` for the sandboxed generated-code compile),
         //    unlike the always-serving server.
-        try installPrivacyBoxShims()
-        ensureConfig(at: privacy_boxConfigURL, Self.privacy_boxConfigDefault)
-        recordStep(".privacy_box-step")
+        try installEnclaveShims()
+        ensureConfig(at: enclaveConfigURL, Self.enclaveConfigDefault)
+        recordStep(".enclave-step")
     }
 
-    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the privacy_box
+    /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the enclave
     /// Mojo prefix's lib/, where flare's `$CONDA_PREFIX/lib` lookup finds them.
-    private func installPrivacyBoxShims() throws {
+    private func installEnclaveShims() throws {
         let fm = FileManager.default
-        let libDir = privacy_boxMojoPrefix.appendingPathComponent("lib", isDirectory: true)
+        let libDir = enclaveMojoPrefix.appendingPathComponent("lib", isDirectory: true)
         try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
-        let buildDir = privacy_boxDir.appendingPathComponent("build", isDirectory: true)
+        let buildDir = enclaveDir.appendingPathComponent("build", isDirectory: true)
         for name in (try? fm.contentsOfDirectory(atPath: buildDir.path)) ?? []
         where name.hasSuffix(".so") || name.hasSuffix(".dylib") {
             let dst = libDir.appendingPathComponent(name)
@@ -1123,65 +1123,65 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
-    /// `mojo build` env for the privacy_box toolchain prefix.
-    private func privacy_boxMojoEnv(python: URL) -> [String: String] {
+    /// `mojo build` env for the enclave toolchain prefix.
+    private func enclaveMojoEnv(python: URL) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        let extraPath = "\(python.deletingLastPathComponent().path):\(privacy_boxMojoPrefix.appendingPathComponent("bin").path)"
+        let extraPath = "\(python.deletingLastPathComponent().path):\(enclaveMojoPrefix.appendingPathComponent("bin").path)"
         env["PATH"] = extraPath + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        env["CONDA_PREFIX"] = privacy_boxMojoPrefix.path
-        env["MODULAR_HOME"] = privacy_boxMojoPrefix.appendingPathComponent("share/max").path
+        env["CONDA_PREFIX"] = enclaveMojoPrefix.path
+        env["MODULAR_HOME"] = enclaveMojoPrefix.appendingPathComponent("share/max").path
         return env
     }
 
-    // ── privacy_box: start (open a ready-to-use Terminal) ──────────────────────────
-    /// privacy_box is a one-shot CLI, so "start" opens a Terminal in the install dir
+    // ── enclave: start (open a ready-to-use Terminal) ──────────────────────────
+    /// enclave is a one-shot CLI, so "start" opens a Terminal in the install dir
     /// with the toolchain env pre-set — the user sets ANTHROPIC_API_KEY, points it
-    /// at their data, and runs `./build/privacy_box`.
-    public func startPrivacyBox() {
+    /// at their data, and runs `./build/enclave`.
+    public func startEnclave() {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            do { try await self.launchPrivacyBoxTerminal() }
-            catch { await self.set(failed: "privacy_box: \(humanError(error))") }
+            do { try await self.launchEnclaveTerminal() }
+            catch { await self.set(failed: "enclave: \(humanError(error))") }
         }
     }
 
-    /// Write the `run-privacy_box.sh` launcher — sets the toolchain env (privacy_box
+    /// Write the `run-enclave.sh` launcher — sets the toolchain env (enclave
     /// shells `mojo build` for the sandboxed generated-code compile), cd's to the
-    /// install dir, and execs the privacy_box binary, forwarding any args (`"$@"`) as
+    /// install dir, and execs the enclave binary, forwarding any args (`"$@"`) as
     /// the task. Shared by the menu app (runs it in a NEW Terminal) and the CLI
-    /// (execs it in the CURRENT terminal so privacy_box takes over stdin/stdout — a
+    /// (execs it in the CURRENT terminal so enclave takes over stdin/stdout — a
     /// one-shot run with a task, or an interactive REPL with none). Returns its path.
     @discardableResult
-    public func writePrivacyBoxScript() throws -> URL {
-        let mojoBin = privacy_boxMojoPrefix.appendingPathComponent("bin").path
-        let modularHome = privacy_boxMojoPrefix.appendingPathComponent("share/max").path
+    public func writeEnclaveScript() throws -> URL {
+        let mojoBin = enclaveMojoPrefix.appendingPathComponent("bin").path
+        let modularHome = enclaveMojoPrefix.appendingPathComponent("share/max").path
         // Single-quote paths (they live under "Application Support" — note the space).
-        let script = support.appendingPathComponent("run-privacy_box.sh")
+        let script = support.appendingPathComponent("run-enclave.sh")
         let body = """
         #!/bin/bash
-        cd '\(privacy_boxDir.path)'
+        cd '\(enclaveDir.path)'
         # Resolve sandbox/*.sb.template + resources/ by ABSOLUTE path (not cwd).
-        export PRIVACY_BOX_HOME='\(privacy_boxDir.path)'
-        export CONDA_PREFIX='\(privacy_boxMojoPrefix.path)'
+        export ENCLAVE_HOME='\(enclaveDir.path)'
+        export CONDA_PREFIX='\(enclaveMojoPrefix.path)'
         export MODULAR_HOME='\(modularHome)'
         export PATH='\(mojoBin)':"$PATH"
         # The vault path shells `<millfolio>/build/mill manifest`, compiles the
         # generated program with `-I <millfolio>/src` + its vendored siblings, and
-        # reads the ~/.config/mill index. privacy_box defaults to the dev sibling
+        # reads the ~/.config/mill index. enclave defaults to the dev sibling
         # layout (../millfolio); point it at the installed millfolio checkout instead.
-        export PRIVACY_BOX_MILLFOLIO='\(millfolioDir.path)'
+        export ENCLAVE_MILLFOLIO='\(millfolioDir.path)'
         # flare's bundled OpenSSL has a CI-baked CA path; point it at the system
         # bundle so HTTPS to the Anthropic API verifies (else CertificateUntrusted).
         [ -f /etc/ssl/cert.pem ] && export SSL_CERT_FILE='/etc/ssl/cert.pem'
-        exec ./build/privacy_box "$@"
+        exec ./build/enclave "$@"
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         return script
     }
 
-    public func launchPrivacyBoxTerminal() async throws {
-        let script = try writePrivacyBoxScript()
+    public func launchEnclaveTerminal() async throws {
+        let script = try writeEnclaveScript()
         let cmd = "'\(script.path)'"
         try run("/usr/bin/osascript",
                 ["-e", "tell application \"Terminal\" to activate",
@@ -1201,7 +1201,7 @@ public final class Bootstrapper: ObservableObject {
     }
 
     /// Download millfolio's Mojo toolchain + PRECOMPILED bundle and place it. Same
-    /// nightly as privacy_box; the bundle ships a prebuilt binary + pkgs/*.mojoc
+    /// nightly as enclave; the bundle ships a prebuilt binary + pkgs/*.mojoc
     /// (the vault surface + libs) + prebuilt FFI shims — no source, no on-device
     /// build. The toolchain is still needed to compile the per-query generated
     /// programs against `-I pkgs`, and to install the shims into its lib/.
@@ -1217,7 +1217,7 @@ public final class Bootstrapper: ObservableObject {
             millfolioDir.appendingPathComponent("pkgs/vault.mojoc"),
         ]
         if stepCurrent(".millfolio-step", millfolioCritical)
-            && !mojoToolchainStale(millfolioMojoPrefix, Self.privacy_boxMojoVersion) {
+            && !mojoToolchainStale(millfolioMojoPrefix, Self.enclaveMojoVersion) {
             set("millfolio already installed — skipping")
             return
         }
@@ -1227,8 +1227,8 @@ public final class Bootstrapper: ObservableObject {
         }
         logHeader("Install millfolio")
 
-        // 1. Mojo toolchain (same nightly as privacy_box).
-        if mojoToolchainStale(millfolioMojoPrefix, Self.privacy_boxMojoVersion) {
+        // 1. Mojo toolchain (same nightly as enclave).
+        if mojoToolchainStale(millfolioMojoPrefix, Self.enclaveMojoVersion) {
             set("Downloading Mojo compiler for millfolio (~70 MB)…")
             try? fm.removeItem(at: millfolioMojoPrefix)   // clear any stale nightly
             try fm.createDirectory(at: millfolioMojoPrefix, withIntermediateDirectories: true)
@@ -1237,7 +1237,7 @@ public final class Bootstrapper: ObservableObject {
             try extractConda(compiler, into: millfolioMojoPrefix)
             let py = try await download(millfolioMojoPythonURL, name: "millfolio-mojo-python.conda")
             try extractConda(py, into: millfolioMojoPrefix)
-            recordMojoVersion(millfolioMojoPrefix, Self.privacy_boxMojoVersion)
+            recordMojoVersion(millfolioMojoPrefix, Self.enclaveMojoVersion)
         }
         try relocateMojoPrefix(millfolioMojoPrefix)
 
@@ -1269,7 +1269,7 @@ public final class Bootstrapper: ObservableObject {
 
     /// Copy the bundled relocatable FFI shims (+ their dylib deps) into the millfolio
     /// Mojo prefix's lib/, where flare/zlib/lancedb's `$CONDA_PREFIX/lib` lookup
-    /// finds them. Mirrors installPrivacyBoxShims.
+    /// finds them. Mirrors installEnclaveShims.
     private func installMillfolioShims() throws {
         let fm = FileManager.default
         let libDir = millfolioMojoPrefix.appendingPathComponent("lib", isDirectory: true)
@@ -1283,43 +1283,43 @@ public final class Bootstrapper: ObservableObject {
         }
     }
 
-    /// The vault program privacy_box compiles + runs executes under privacy_box's
-    /// CONDA_PREFIX (privacy_box-mojo), so the millfolio vault FFI shims it dlopens
+    /// The vault program enclave compiles + runs executes under enclave's
+    /// CONDA_PREFIX (enclave-mojo), so the millfolio vault FFI shims it dlopens
     /// (liblancedbmojo / libzlibmojo + their dylib deps) must live in
-    /// privacy_box-mojo/lib too. Copy the ones privacy_box lacks from the millfolio
+    /// enclave-mojo/lib too. Copy the ones enclave lacks from the millfolio
     /// toolchain (same Mojo nightly → ABI-compatible). Best-effort; idempotent.
     public func linkVaultShims() {
         let fm = FileManager.default
         let src = millfolioMojoPrefix.appendingPathComponent("lib")
-        let dst = privacy_boxMojoPrefix.appendingPathComponent("lib")
+        let dst = enclaveMojoPrefix.appendingPathComponent("lib")
         guard fm.fileExists(atPath: src.path) else { return }
         try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
         for name in (try? fm.contentsOfDirectory(atPath: src.path)) ?? []
         where name.hasSuffix(".dylib") || name.hasSuffix(".so") {
             let d = dst.appendingPathComponent(name)
-            if !fm.fileExists(atPath: d.path) {   // don't clobber privacy_box's own shims
+            if !fm.fileExists(atPath: d.path) {   // don't clobber enclave's own shims
                 try? fm.copyItem(at: src.appendingPathComponent(name), to: d)
             }
         }
     }
 
-    /// Prime privacy_box's Mojo build cache so the FIRST vault query is warm.
+    /// Prime enclave's Mojo build cache so the FIRST vault query is warm.
     ///
     /// Every vault question compiles a ~20-line `from vault import *` program in
-    /// the sandbox (privacy_box's CONDA_PREFIX). Cold, that recompiles the whole
+    /// the sandbox (enclave's CONDA_PREFIX). Cold, that recompiles the whole
     /// tool surface + its deps; warm (cache populated), it's a fraction of a
     /// second. Without this, the first query pays the full cold cost. We compile a
-    /// throwaway program with the EXACT include set the orchestrator uses
+    /// throwaway program with the EXACT include set the harness uses
     /// (vaultcfg.vault_include_paths → millfolio/src + the vendored siblings),
-    /// under privacy_box's toolchain env, which fills privacy_box-mojo's
+    /// under enclave's toolchain env, which fills enclave-mojo's
     /// .mojo_cache. Best-effort + idempotent: a failure here just means the first
     /// real query warms it instead (no install failure).
     public func primeVaultCompile() {
         let fm = FileManager.default
-        guard isPrivacyBoxInstalled, isMillfolioInstalled,
+        guard isEnclaveInstalled, isMillfolioInstalled,
               let python = try? findPython() else { return }
-        let mojo = privacy_boxMojoPrefix.appendingPathComponent("bin/mojo").path
-        // The orchestrator's include set (mirror of vaultcfg.vault_include_paths):
+        let mojo = enclaveMojoPrefix.appendingPathComponent("bin/mojo").path
+        // The harness's include set (mirror of vaultcfg.vault_include_paths):
         // the single millfolio/pkgs dir of precompiled `.mojoc`s (vault + its
         // libs). No source on the include path.
         let inc = [
@@ -1338,9 +1338,9 @@ public final class Bootstrapper: ObservableObject {
             set("Warming the vault compile cache…")
             // Same toolchain env the sandboxed per-query compile uses. Not
             // sandboxed here (trusted, our own stub), but it fills the SAME
-            // privacy_box-mojo/.mojo_cache the sandboxed compile reads.
+            // enclave-mojo/.mojo_cache the sandboxed compile reads.
             try run(mojo, ["build", gen.path] + inc + ["-o", tmp.appendingPathComponent("gen").path],
-                    cwd: privacy_boxDir, env: privacy_boxMojoEnv(python: python))
+                    cwd: enclaveDir, env: enclaveMojoEnv(python: python))
         } catch {
             // Best-effort: log and move on — the first real query will warm it.
             set("Vault compile-cache prime skipped (\(humanError(error)))")
@@ -1388,16 +1388,16 @@ public final class Bootstrapper: ObservableObject {
     /// the streaming chat WS on one port) is shipped PREBUILT — built + rpath-
     /// relocated + ad-hoc signed in CI by app/scripts/package-app.sh (mirrors the
     /// vault `millfolio` binary) — so there's no on-device `mojo build`. It still
-    /// runs under privacy_box's toolchain env at runtime (CONDA_PREFIX + the flare
-    /// shims from mojo/lib), so it requires the privacy_box engine.
+    /// runs under enclave's toolchain env at runtime (CONDA_PREFIX + the flare
+    /// shims from mojo/lib), so it requires the enclave engine.
     public func installAppServer() async throws {
         if stepCurrent(".appserver-step", [appServerBin]) {
             set("millfolio app server already installed — skipping")
             return
         }
-        guard isPrivacyBoxInstalled else {
+        guard isEnclaveInstalled else {
             throw BootstrapError.step("app server",
-                "privacy_box engine not installed — run `mill install` first")
+                "enclave engine not installed — run `mill install` first")
         }
         let fm = FileManager.default
         try fm.createDirectory(at: appRoot, withIntermediateDirectories: true)
@@ -1459,10 +1459,10 @@ public final class Bootstrapper: ObservableObject {
                  "-e", "tell application \"Terminal\" to do script \"\(cmd)\""])
     }
 
-    // ── millfolio: the VAULT umbrella (engine + privacy_box + vault) ──────────────────
+    // ── millfolio: the VAULT umbrella (engine + enclave + vault) ──────────────────
     // millfolio is the umbrella entry point for the personal-data-vault use case. It
     // composes the three engines: the combined inference server (chat + embeddings
-    // — both models' weights), privacy_box (the harness + its vault web chat), and the
+    // — both models' weights), enclave (the harness + its vault web chat), and the
     // millfolio vault tools/indexer.
 
     /// Resolve the vault dir: an explicit arg wins, then $MILLFOLIO_VAULT, then
@@ -1488,8 +1488,8 @@ public final class Bootstrapper: ObservableObject {
     }
 
     /// `mill install` — install the combined inference server (+ both
-    /// models' weights) + privacy_box + millfolio, idempotently. Each step skips what's
-    /// already installed (see the guards in installServer/PrivacyBoxEngine/Millfolio-
+    /// models' weights) + enclave + millfolio, idempotently. Each step skips what's
+    /// already installed (see the guards in installServer/EnclaveEngine/Millfolio-
     /// Engine), so re-running is cheap and reuses anything present.
     // MARK: - Environment preflight (shared by `mill install` + `mill doctor`)
 
@@ -1588,14 +1588,14 @@ public final class Bootstrapper: ObservableObject {
     public func installVault() async throws {
         try requireEnv()                    // fail fast on missing Xcode/Metal/Python
         try await installServer()           // engine + chat + embedding weights
-        // Millfolio (vault tools + precompiled pkgs) BEFORE privacy_box: the
-        // orchestrator now builds against the vault pkg for in-process tags, so the
+        // Millfolio (vault tools + precompiled pkgs) BEFORE enclave: the
+        // harness now builds against the vault pkg for in-process tags, so the
         // pkgs must be unpacked first.
         try await installMillfolioEngine()    // the vault tools + indexer + pkgs
-        try await installPrivacyBoxEngine()   // the vault orchestrator/sandbox (needs vault pkgs)
+        try await installEnclaveEngine()   // the vault harness/sandbox (needs vault pkgs)
         try await installAppServer()        // the millfolio web app (UI on :10000, WS on :10001)
-        linkVaultShims()                    // millfolio FFI shims → privacy_box-mojo/lib (vault-run dlopen)
-        primeVaultCompile()                 // warm privacy_box-mojo's .mojo_cache so query #1 is fast
+        linkVaultShims()                    // millfolio FFI shims → enclave-mojo/lib (vault-run dlopen)
+        primeVaultCompile()                 // warm enclave-mojo's .mojo_cache so query #1 is fast
         ensureVaultDir()                    // leave the default vault dir ready
     }
 
@@ -1612,23 +1612,23 @@ public final class Bootstrapper: ObservableObject {
 
     /// The app server (UI + REST + chat WS on :10000) as a launchd agent — the SAME
     /// mechanism as the inference server (no more nohup orphan / pkill race). Runs the
-    /// millfolio-server binary from privacy_box's dir (so `sandbox/*.sb.template`
+    /// millfolio-server binary from enclave's dir (so `sandbox/*.sb.template`
     /// resolve), the UI from MILLFOLIO_WEB_DIR (absolute), with the toolchain env
     /// (CONDA_PREFIX + flare shims) + the vault-resolution env. Returns the plist URL.
     private func writeAppServerLaunchAgent(vaultDir dir: String) throws -> URL {
         try FileManager.default.createDirectory(
             at: appServerLaunchAgentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: millfolioLogDir, withIntermediateDirectories: true)
-        let mojoBin = privacy_boxMojoPrefix.appendingPathComponent("bin").path
+        let mojoBin = enclaveMojoPrefix.appendingPathComponent("bin").path
         // The engine runner the app server shells for /api/search (LanceDB stays out
         // of the web server). Ensure it exists + hand the server its path.
         let runScript = try writeMillfolioScript()
         var env: [String: String] = [
-            "CONDA_PREFIX": privacy_boxMojoPrefix.path,
-            "MODULAR_HOME": privacy_boxMojoPrefix.appendingPathComponent("share/max").path,
+            "CONDA_PREFIX": enclaveMojoPrefix.path,
+            "MODULAR_HOME": enclaveMojoPrefix.appendingPathComponent("share/max").path,
             // launchd doesn't inherit a login PATH — give it mojo's bin + system dirs.
             "PATH": "\(mojoBin):/usr/bin:/bin:/usr/sbin:/sbin",
-            "PRIVACY_BOX_VAULT_DIR": dir,
+            "ENCLAVE_VAULT_DIR": dir,
             "MILLFOLIO_VAULT": dir,
             // The vault tools (search/ask_local) hit the inference server over loopback.
             "MILLFOLIO_EMBED_URL": "http://127.0.0.1:8000/v1",
@@ -1641,11 +1641,11 @@ public final class Bootstrapper: ObservableObject {
             "MILLFOLIO_DOWNLOAD_BIN": downloadBin.path,
             "HF_HOME": hfHome.path,
             // The chat WS compiles the generated program against the millfolio sources.
-            "PRIVACY_BOX_MILLFOLIO": millfolioDir.path,
-            // The privacy_box install dir — so it resolves its sandbox/*.sb.template
-            // profiles + resources/privacy_box-system.md by ABSOLUTE path, not the
+            "ENCLAVE_MILLFOLIO": millfolioDir.path,
+            // The enclave install dir — so it resolves its sandbox/*.sb.template
+            // profiles + resources/enclave-system.md by ABSOLUTE path, not the
             // process cwd (WorkingDirectory below is belt-and-suspenders).
-            "PRIVACY_BOX_HOME": privacy_boxDir.path,
+            "ENCLAVE_HOME": enclaveDir.path,
             // Serve the built UI by ABSOLUTE path so it doesn't depend on cwd.
             "MILLFOLIO_WEB_DIR": appRoot.appendingPathComponent("web/dist").path,
             "MILLFOLIO_RUN_SCRIPT": runScript.path,
@@ -1686,9 +1686,9 @@ public final class Bootstrapper: ObservableObject {
         // ~/Library/LaunchAgents). We chmod the plist 0600 below so it is
         // owner-only on disk (PropertyListSerialization.write would otherwise
         // leave it group/other-readable at the umask default). To avoid the
-        // on-disk key entirely, put it in ~/.config/privacy_box/config.json
+        // on-disk key entirely, put it in ~/.config/enclave/config.json
         // (0600) instead — settings reads either.
-        for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "PRIVACY_BOX_REMOTE_TOKEN_BUDGET"] {
+        for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ENCLAVE_REMOTE_TOKEN_BUDGET"] {
             if let v = ProcessInfo.processInfo.environment[key], !v.isEmpty {
                 env[key] = v
             }
@@ -1714,7 +1714,7 @@ public final class Bootstrapper: ObservableObject {
         let plist: [String: Any] = [
             "Label": Self.appServerLabel,
             "ProgramArguments": [wrapper.path],
-            "WorkingDirectory": privacy_boxDir.path,   // sandbox/*.sb.template resolve here
+            "WorkingDirectory": enclaveDir.path,   // sandbox/*.sb.template resolve here
             "EnvironmentVariables": env,
             "StandardErrorPath": serverLog,            // pre-exec wrapper (sh) errors only
             "RunAtLoad": true,
@@ -1818,7 +1818,7 @@ public final class Bootstrapper: ObservableObject {
     /// then start the vault app servers in the BACKGROUND (no Terminal) and open
     /// http://localhost:10000. Server output goes to the millfolio server log.
     public func startVaultChat(vaultDir dir: String, openBrowser: Bool = true) async throws {
-        // 0. The vault dir must exist before privacy_box/millfolio's `manifest` runs
+        // 0. The vault dir must exist before enclave/millfolio's `manifest` runs
         //    over it (a clean machine has no vault dir yet).
         try? FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true)
@@ -2181,28 +2181,28 @@ public final class Bootstrapper: ObservableObject {
 
     // ── diagnosable one-shot runs (ask / index) ────────────────────────────────
     // The `ask` and `index` subcommands used to execv /bin/bash, which REPLACES
-    // this process — so a failure inside the child (e.g. privacy_box's `posix_spawn`
+    // this process — so a failure inside the child (e.g. enclave's `posix_spawn`
     // of the mojo compiler failing with ENOENT) left nothing to log. These run the
     // launcher as a child instead, mirroring its combined stdout/stderr to both the
     // terminal and the millfolio log, after dumping the launcher + the paths it
     // depends on. Returns the child's exit status (caller maps it to the CLI exit).
 
-    /// Run the privacy_box vault loop for one question. See runLoggedScript.
+    /// Run the enclave vault loop for one question. See runLoggedScript.
     public func runVaultAsk(question: String, vaultDir: String) throws -> Int32 {
         refreshServerRunning()
         ensureVaultShims()  // self-heal a wiped shared-toolchain lib/ before the vault binary dlopens it
-        let script = try writePrivacyBoxScript()
+        let script = try writeEnclaveScript()
         let args = ["vault", question, vaultDir]
         logRunDiagnostics(label: "ask", launcher: script, args: args, probes: [
-            ("privacy_box launcher", script.path),
-            ("privacy_box dir (cwd)", privacy_boxDir.path),
-            ("privacy_box binary", privacy_boxBin.path),
-            ("mojo compiler (privacy_box shells it)", privacy_boxMojoPrefix.appendingPathComponent("bin/mojo").path),
+            ("enclave launcher", script.path),
+            ("enclave dir (cwd)", enclaveDir.path),
+            ("enclave binary", enclaveBin.path),
+            ("mojo compiler (enclave shells it)", enclaveMojoPrefix.appendingPathComponent("bin/mojo").path),
             ("millfolio vault tools (src)", millfolioDir.appendingPathComponent("src/vault.mojo").path),
             ("vault dir", vaultDir),
         ])
         // Per-ask transcript: the CLI names it (timestamp + question slug) and the
-        // privacy_box orchestrator appends the outside-model prompt + program to it.
+        // enclave harness appends the outside-model prompt + program to it.
         let session = newSessionLog(for: question)
         set("session transcript → \(session.path)")
         return try runLoggedScript(script.path, args, label: "ask",
@@ -2307,7 +2307,7 @@ public final class Bootstrapper: ObservableObject {
 
     // ── self-update (CLI + components) ──────────────────────────────────────────
     /// Update the `millfolio` CLI via Homebrew (best-effort), then refresh the
-    /// downloadable components — the inference-server engine, privacy_box, and the
+    /// downloadable components — the inference-server engine, enclave, and the
     /// millfolio engine — to their latest releases. The pinned Mojo toolchains and the
     /// (multi-GB) model weights are preserved; only the source bundles are re-fetched
     /// and rebuilt. Progress streams through `onProgress`.
@@ -2343,15 +2343,15 @@ public final class Bootstrapper: ObservableObject {
         set("Refreshing engine, the inference server…")
         try await installServer()
 
-        set("Refreshing privacy_box, the privacy agent harness…")
-        try await installPrivacyBoxEngine()
+        set("Refreshing enclave, the privacy agent harness…")
+        try await installEnclaveEngine()
 
         set("Refreshing millfolio, the vault engine…")
         try await installMillfolioEngine()
         linkVaultShims()   // millfolio FFI shims → the shared toolchain lib (vault-run dlopen)
         primeVaultCompile()  // re-warm the vault compile cache (the nightly may have bumped)
 
-        // The streaming app server (built on-device against privacy_box). A real build
+        // The streaming app server (built on-device against enclave). A real build
         // error must fail the update, not be swallowed (else `mill update` falsely
         // reports success).
         set("Refreshing millfolio app server…")
@@ -2444,7 +2444,7 @@ public final class Bootstrapper: ObservableObject {
         return [
             ("cli (millfolio)", cli.isEmpty ? "—" : cli),
             ("inference server", v(isServerInstalled)),
-            ("privacy_box", v(isPrivacyBoxInstalled)),
+            ("enclave", v(isEnclaveInstalled)),
             ("vault engine", v(isMillfolioInstalled)),
             ("app web server", v(isAppServerInstalled)),
         ]
