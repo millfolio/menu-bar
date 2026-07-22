@@ -38,10 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: MainWindowController?
     private var onboardingController: OnboardingWindowController?
 
-    /// App-menu "Check for Updates…" target. Routed through the responder chain so it
-    /// works from the native App menu (MenuBuilder) when a window is on screen.
+    /// "Check for Updates…" target (App menu, menu-bar item, toolbar all route here).
+    /// One button, both layers: the Sparkle check updates the APP shell, and the bundle
+    /// refresh picks up features shipped on the prod bundle line (the app has no
+    /// `mill update` path). The bundle refresh only restarts the servers if it actually
+    /// found a newer release, so an up-to-date check is a no-op beyond Sparkle's dialog.
     @objc func checkForUpdates(_ sender: Any?) {
         updater.checkForUpdates()
+        bootstrapper.refreshBundleAndRestartIfChangedFireAndForget(openBrowser: false)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

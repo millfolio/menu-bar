@@ -61,8 +61,10 @@ struct MenuContent: View {
 
         Divider()
 
-        // Sparkle auto-update: user-initiated check (also runs on a schedule).
-        Button("Check for Updates…") { updater.checkForUpdates() }
+        // One button, both layers: Sparkle updates the app shell AND the prod bundle
+        // is refreshed (features shipped on the bundle line). Routed through
+        // AppDelegate.checkForUpdates so the menu, App menu, and toolbar all match.
+        Button("Check for Updates…") { appDelegate.checkForUpdates(nil) }
             .disabled(!updater.canCheckForUpdates)
 
         Divider()

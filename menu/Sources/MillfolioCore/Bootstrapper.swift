@@ -2040,16 +2040,19 @@ public final class Bootstrapper: ObservableObject {
     /// Offline-safe: when the prod-latest lookup fails we keep the installed bundle
     /// (never wipe it). Progress streams through `phase`/`onProgress`, so the caller can
     /// surface it. Runs the SAME `installVault` provision path used on first run.
-    public func refreshBundleIfStale() async throws {
-        guard forceLatestBundle else { return }   // the CLI pins to its brew tag; no-op there
-        guard isProvisioned else { return }       // not provisioned → first-run onboarding handles it
+    /// Returns true iff it actually re-provisioned to a newer bundle (so the caller
+    /// knows whether the servers need (re)starting). No-op paths return false.
+    @discardableResult
+    public func refreshBundleIfStale() async throws -> Bool {
+        guard forceLatestBundle else { return false }   // the CLI pins to its brew tag; no-op there
+        guard isProvisioned else { return false }       // not provisioned → first-run onboarding handles it
         guard let latest = await resolveProdLatestVersion() else {
             set("Couldn't check for a newer millfolio release (offline?) — keeping the installed one.")
-            return
+            return false
         }
         resolvedProdLatest = latest               // pin the freshness key + staleness `want`
         let have = installedBundleVersion()
-        guard have != latest else { return }      // already current
+        guard have != latest else { return false }      // already current
         set("Updating millfolio to \(latest)… (this can take a couple of minutes)")
         // Stop the app server so its binary can be replaced, drop the unpacked bundle so
         // `ensureBundle` re-fetches, then re-run the full provision. Because
@@ -2058,6 +2061,26 @@ public final class Bootstrapper: ObservableObject {
         _ = await stopAppServer()
         try? FileManager.default.removeItem(at: bundleRoot)
         try await installVault()
+        return true
+    }
+
+    /// User-initiated "Check for Updates" bundle path (servers already running):
+    /// refresh the prod bundle and RESTART onto it only if it actually changed — so an
+    /// up-to-date check leaves the running servers alone (no gratuitous restart). Paired
+    /// with the Sparkle app-update check so one button updates both the app and the bundle.
+    public func refreshBundleAndRestartIfChangedFireAndForget(openBrowser: Bool = false) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let changed = try await self.refreshBundleIfStale()
+                if changed {
+                    try await self.startVaultChat(vaultDir: self.vaultDir(), openBrowser: openBrowser)
+                }
+                await self.set(done: true)
+            } catch {
+                await self.set(failed: "update: \(humanError(error))")
+            }
+        }
     }
 
     /// App-launch entry point (provisioned): refresh the bundle if a newer PROD release
